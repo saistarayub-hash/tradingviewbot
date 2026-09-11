@@ -125,16 +125,17 @@ class MockLLM(LLM):
         if intent in ("help",):
             return (
                 "Here's what I can do:\n\n"
-                "🎥 **Teach me a strategy** — paste any YouTube link and I'll watch the video "
-                "(captions), pull out the trading rules, and generate your indicator.\n\n"
-                "📊 **Indicator** — the current strategy is always compiled to Pine Script v6 in "
-                "`pine/indicator.pine` (signal arrows + stop/target levels) with alert webhooks "
-                "back to me, and `pine/strategy.pine` for backtesting.\n\n"
-                "🧠 **Learning** — every BUY/SELL alert your TradingView indicator fires comes back "
-                "to me via webhook. I check win rate after the exit signal and suggest improvements.\n\n"
-                "🔌 **Real AI** — install a Gemini or OpenAI key in Settings (top right) and I'll "
-                "extract strategies with far deeper understanding.\n\n"
-                "Try it now: paste a video link, or click **“Feed me a demo video”**."
+                "📝 **Teach me directly** — just type your strategy in chat, e.g.\n"
+                "`buy when the 9 EMA crosses above the 21 EMA and RSI is below 50, "
+                "stop 2 ATR, target 2R, 15 min chart` — and I'll build the Pine Script instantly.\n\n"
+                "📊 **Indicator** — every BUY/SELL/SHORT/COVER shows a label with the exact "
+                "**reasons** it fired, plus a live position panel on the chart, in neat "
+                "long/short blocks. `pine/indicator.pine` for the chart, `pine/strategy.pine` for backtesting.\n\n"
+                "🎥 **Video links still work** — paste a YouTube URL and I'll learn from the captions.\n\n"
+                "🧠 **Learning** — TradingView alerts webhook back to me; I track win rate and "
+                "suggest tweaks. Say “apply” to accept.\n\n"
+                "🔌 **Real AI** — add a Gemini or OpenAI key in Settings for smarter extraction.\n\n"
+                "Try a quick example below the chat box, or describe your own strategy."
             )
         if intent in ("status",):
             return f"{name} — here's the current brain state:\n\n{context}"
@@ -142,16 +143,17 @@ class MockLLM(LLM):
             return (
                 f"{name} — I'm running in offline (mock) mode, so I use the built-in rule engine "
                 f"instead of an LLM. Install a Gemini or OpenAI key in **Settings** to unlock the "
-                f"full chat brain. The strategy generation itself already works — paste a video link!"
+                f"full chat brain. Strategy generation works right now — just type your rules!"
             )
         if intent == "greet":
-            return "👋 Hey! I'm your TradingView brain. Paste a YouTube video link and I'll learn the strategy from it."
+            return "👋 Hey! I'm your TradingView brain. Describe your strategy (entries, exits, stop, target) and I'll build the indicator script for you."
         if intent == "thanks":
-            return "You're welcome! Paste a video link any time — the more I watch, the more I learn."
+            return "You're welcome! Type any strategy tweak and I'll rebuild the script instantly."
         return (
-            f"{name} — I'm running in offline (mock) mode. The most useful thing you can do right "
-            f"now is paste a **YouTube link** and I'll extract the strategy with my rule engine. "
-            f"Install a Gemini or OpenAI key in Settings for full chat understanding."
+            f"{name} — the quickest way to use me: type your strategy in plain English "
+            f"(e.g. “buy when the 9 EMA crosses above the 21 EMA, RSI below 50, stop 2 ATR, "
+            f"target 2R”). I'll compile it into Pine Script v6 for TradingView. "
+            f"Install a Gemini or OpenAI key in Settings for deeper understanding."
         )
 
 

@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from brain.core import generator, learn
-from brain.core.insight import INTENTS, detect_intent
+from brain.core.insight import INTENTS, detect_intent, is_strategy_text
 from brain.core.llm import get_llm
 from brain.core.store import REPO_ROOT, Stores, now_iso
 from brain.core.video import ingest_video, video_id_from_url
@@ -76,6 +76,57 @@ def _chat_reply(user_message: str) -> str:
     return llm.reply(user_message, _context_lines())
 
 
+def _apply_suggestion_now() -> tuple[str, dict | None]:
+    """Apply the brain's current suggestion (if any). Returns (reply, strategy)."""
+    suggestions = _suggestions()
+    if not suggestions:
+        return (
+            "Nothing to apply right now — keep the TradingView alerts flowing "
+            "(or press **Simulate 2 pairs** to feed me data).",
+            None,
+        )
+    patch = suggestions[0]["patch"]
+    strategy = generator.apply_patch(_strategy(), patch)
+    _save_strategy(strategy)
+    _sync_pine(strategy)
+    return (
+        f"✅ Suggestion applied (rev {strategy['revision']}). `pine/` regenerated — "
+        f"re-copy `pine/indicator.pine` into TradingView.",
+        strategy,
+    )
+
+
+async def _teach_from_text(text: str) -> tuple[str, dict]:
+    """Build a strategy directly from a chat description (no video needed)."""
+    extraction = await get_llm(stores.settings.read()).extract(
+        text, {"title": None, "url": None}
+    )
+    extraction = extraction or {}
+    name = extraction.get("name")
+    if not name or name == "Learned Strategy":
+        name = "My Strategy"
+    prev = _strategy() or {}
+    strategy = generator.normalize_strategy(
+        extraction,
+        name=name,
+        source_video=None,
+        revision=int(prev.get("revision", 0)) + 1,
+    )
+    _save_strategy(strategy)
+    _sync_pine(strategy)
+    reply = (
+        f"📝 Got it — built from your description:\n\n{generator.summarize_rules(strategy)}\n\n"
+        f"✅ **{name}** (rev {strategy['revision']}) is live.\n"
+        f"📄 `pine/indicator.pine` — every BUY/SELL/SHORT/COVER now shows a label with the "
+        f"**reasons** it fired, plus a live position panel on the chart.\n"
+        f"📄 `pine/strategy.pine` — backtest version of the same rules.\n\n"
+        f"Paste it into TradingView (Pine Editor → Add to chart). Tweak anything and I'll rebuild it."
+    )
+    if strategy.get("notes"):
+        reply += "\n\n⚠️ " + " · ".join(strategy["notes"])
+    return reply, strategy
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Static UI
 # ────────────────────────────────────────────────────────────────────────────
@@ -134,17 +185,34 @@ async def chat(req: Request):
         stores.add_message("assistant", reply)
         return {"reply": reply, "strategy": strategy, "video": video["title"]}
 
-    # 2) generic chat
+    # 2) direct strategy description → build the script right away
     intent = detect_intent(text)
-    reply = await _chat_reply(text)
+
+    if intent == "apply":
+        reply, _ = _apply_suggestion_now()
+        stores.add_message("assistant", reply)
+        return {"reply": reply, "strategy": _strategy()}
+
     if intent == "status":
         reply = f"{INTENTS['status'][0]} — here's the current brain state:\n\n{_context_lines()}"
+        stores.add_message("assistant", reply)
+        return {"reply": reply, "strategy": _strategy()}
+
     if intent == "clear":
         stores.strategy.write(generator.default_strategy())
         stores.signals.write([])
         stores.messages.write([])
         _sync_pine(_strategy())
         reply = "🧹 Brain wiped — back to the built-in starter strategy. `pine/` regenerated."
+        stores.add_message("assistant", reply)
+        return {"reply": reply, "strategy": _strategy()}
+
+    if is_strategy_text(text):
+        reply, strategy = await _teach_from_text(text)
+        stores.add_message("assistant", reply)
+        return {"reply": reply, "strategy": strategy}
+
+    # 3) everything else → plain chat
     if intent == "learn":
         stats = learn.review(stores, _strategy())
         suggestions = _suggestions()
@@ -166,24 +234,18 @@ async def chat(req: Request):
         else:
             reply += "\n\nNothing to tune yet — keep those TradingView alerts flowing. "
             reply += "Once I've seen 5 completed BUY→SELL pairs I can start proposing improvements."
+    else:
+        reply = await _chat_reply(text)
     stores.add_message("assistant", reply)
     return {"reply": reply, "strategy": _strategy()}
 
 
 @app.post("/api/apply-suggestion")
 async def apply_suggestion():
-    suggestions = _suggestions()
-    if not suggestions:
+    reply, strategy = _apply_suggestion_now()
+    if strategy is None:
         raise HTTPException(404, "no suggestion available")
-    patch = suggestions[0]["patch"]
-    strategy = generator.apply_patch(_strategy(), patch)
-    _save_strategy(strategy)
-    _sync_pine(strategy)
-    stores.add_message(
-        "assistant",
-        f"✅ Applied learning suggestion (rev {strategy['revision']}). `pine/` regenerated. "
-        f"Re-copy `pine/indicator.pine` into TradingView.",
-    )
+    stores.add_message("assistant", reply)
     return {"ok": True, "strategy": strategy}
 
 

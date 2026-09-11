@@ -157,9 +157,14 @@ def default_strategy() -> dict:
 
 
 def normalize_strategy(
-    raw, name: str | None = None, source_video: str | None = None, revision: int = 1
+    raw, name: str | None = None, source_video: str | None = None, revision: int | None = None
 ) -> dict:
     """Coerce a raw extraction (LLM JSON or heuristics dict) into canonical form."""
+    if revision is None and isinstance(raw, dict):
+        try:
+            revision = int(raw.get("revision", 1))
+        except (TypeError, ValueError):
+            revision = 1
     s = default_strategy() if raw is None else dict(CANONICAL)
     if isinstance(raw, dict):
         for key in ("name", "timeframe", "market", "side", "summary", "notes", "stop", "target"):
@@ -212,14 +217,16 @@ def normalize_strategy(
 
 def _clean_rules(rules) -> list[dict]:
     out = []
+    seen: set[str] = set()
     for rule in rules:
         if isinstance(rule, str):
             rule = {"id": rule}
         if not isinstance(rule, dict):
             continue
         rid = str(rule.get("id", "")).strip().lower()
-        if rid not in KNOWN_RULE_IDS:
+        if rid not in KNOWN_RULE_IDS or rid in seen:
             continue
+        seen.add(rid)
         params = rule.get("params") if isinstance(rule.get("params"), dict) else {}
         out.append({"id": rid, "params": params})
     return out
@@ -529,6 +536,84 @@ def _rule_label(rule: dict) -> str:
     return f"{rule['id']} {json.dumps(p, sort_keys=True)}"
 
 
+def _rule_reason(rule: dict) -> str:
+    """Short human label for a rule — used in signal labels (the 'reasons')."""
+    rid = rule["id"]
+    p = rule.get("params") or {}
+
+    def fmt(v):
+        return f"{float(v):g}"
+
+    if rid == "ema_cross_up":
+        return f"EMA {_int(p,'fast',9)} ↑ EMA {_int(p,'slow',21)}"
+    if rid == "ema_cross_down":
+        return f"EMA {_int(p,'fast',9)} ↓ EMA {_int(p,'slow',21)}"
+    if rid == "sma_cross_up":
+        return f"SMA {_int(p,'fast',10)} ↑ SMA {_int(p,'slow',30)}"
+    if rid == "sma_cross_down":
+        return f"SMA {_int(p,'fast',10)} ↓ SMA {_int(p,'slow',30)}"
+    if rid == "macd_cross_up":
+        return "MACD ↑ signal"
+    if rid == "macd_cross_down":
+        return "MACD ↓ signal"
+    if rid == "rsi_cross_up":
+        return f"RSI {_int(p,'length',14)} ↑ {fmt(_float(p,'level',50))}"
+    if rid == "rsi_cross_down":
+        return f"RSI {_int(p,'length',14)} ↓ {fmt(_float(p,'level',50))}"
+    if rid == "bb_lower_touch":
+        return f"Low ≤ BB low ({_int(p,'length',20)},{fmt(_float(p,'mult',2.0))})"
+    if rid == "bb_upper_touch":
+        return f"High ≥ BB up ({_int(p,'length',20)},{fmt(_float(p,'mult',2.0))})"
+    if rid == "supertrend_up":
+        return "Supertrend ↑"
+    if rid == "supertrend_down":
+        return "Supertrend ↓"
+    if rid == "breakout_high":
+        return f"Breakout {_int(p,'lookback',20)} high"
+    if rid == "breakdown_low":
+        return f"Breakdown {_int(p,'lookback',20)} low"
+    if rid == "support_bounce":
+        return "Support bounce"
+    if rid == "resistance_reject":
+        return "Resistance reject"
+    if rid == "ichimoku_cloud_up":
+        return "Close ↑ cloud"
+    if rid == "ichimoku_cloud_down":
+        return "Close ↓ cloud"
+    if rid == "ichimoku_above_cloud":
+        return "Above cloud"
+    if rid == "ichimoku_below_cloud":
+        return "Below cloud"
+    if rid == "ema_stack_bull":
+        return f"EMA stack ↑ ({_int(p,'fast',10)}>{_int(p,'mid',20)}>{_int(p,'slow',50)})"
+    if rid == "ema_stack_bear":
+        return f"EMA stack ↓ ({_int(p,'fast',10)}<{_int(p,'mid',20)}<{_int(p,'slow',50)})"
+    if rid == "rsi_below":
+        return f"RSI {_int(p,'length',14)} < {fmt(_float(p,'level',50))}"
+    if rid == "rsi_above":
+        return f"RSI {_int(p,'length',14)} > {fmt(_float(p,'level',50))}"
+    if rid == "price_above_ema":
+        return f"Price > EMA {_int(p,'length',200)}"
+    if rid == "price_below_ema":
+        return f"Price < EMA {_int(p,'length',200)}"
+    if rid == "vwap_above":
+        return "Above VWAP"
+    if rid == "vwap_below":
+        return "Below VWAP"
+    if rid == "adx_above":
+        return f"ADX > {fmt(_float(p,'level',25))}"
+    if rid == "volume_spike":
+        return f"Volume ×{fmt(_float(p,'mult',2.0))} avg"
+    if rid == "session":
+        return "In session"
+    return rid
+
+
+def _reason_join(*rule_lists) -> str:
+    labels = [_rule_reason(r) for rules in rule_lists for r in rules]
+    return " · ".join(labels)
+
+
 def summarize_rules(strategy: dict) -> str:
     """Human-readable strategy summary for chat replies and code headers."""
     lines = []
@@ -648,7 +733,18 @@ def _alert_messages(strategy: dict) -> tuple[str, str, str, str]:
 
 
 def generate_indicator(strategy: dict) -> str:
-    """Compile the strategy into a Pine v6 ``indicator()`` script with alerts."""
+    """Compile the strategy into a Pine v6 ``indicator()`` script.
+
+    The generated script is organised in neat, commented blocks:
+
+      INPUTS · INDICATOR COMPUTATIONS · TRADE STATE · LONG BLOCK ·
+      SHORT BLOCK · POSITION ENGINE · VISUALS · INDICATOR LINES ·
+      POSITION PANEL · ALERTS
+
+    Every entry/exit signal draws an on-chart label showing the exact
+    **reasons** it fired (which rules were true), and a small live table
+    (top-right) shows the current position, entry/stop/target and reason.
+    """
     strategy = normalize_strategy(strategy)
     side = strategy.get("side", "long")
     do_long = side in ("long", "both")
@@ -658,16 +754,23 @@ def generate_indicator(strategy: dict) -> str:
     ctx = _Ctx()
     buy_msg, sell_msg, short_msg, cover_msg = _alert_messages(strategy)
 
+    # ── python-side compilation of conditions + reason texts ──────────
     long_cond = long_exit = "false"
     short_cond = short_exit = "false"
+    long_reason = long_exit_msg = "—"
+    short_reason = short_exit_msg = "—"
     if do_long:
         entry, exit_, filters = _build_side(ctx, strategy["rules"], "entry", "exit", "filters")
         long_cond = _join([e for e in (entry, filters) if e != "false"])
         long_exit = exit_
+        long_reason = _reason_join(strategy["rules"]["entry"], strategy["rules"]["filters"]) or "—"
+        long_exit_msg = _reason_join(strategy["rules"]["exit"]) or "—"
     if do_short:
         entry, exit_, filters = _build_side(ctx, strategy["rules"], "short_entry", "short_exit", "short_filters")
         short_cond = _join([e for e in (entry, filters) if e != "false"])
         short_exit = exit_
+        short_reason = _reason_join(strategy["rules"]["short_entry"], strategy["rules"]["short_filters"]) or "—"
+        short_exit_msg = _reason_join(strategy["rules"]["short_exit"]) or "—"
 
     stop = strategy.get("stop")
     target = strategy.get("target")
@@ -679,23 +782,24 @@ def generate_indicator(strategy: dict) -> str:
     long_target_assign = _target_assign(strategy, "longTarget", "longEntry", "longStop", "long")
     short_target_assign = _target_assign(strategy, "shortTarget", "shortEntry", "shortStop", "short")
 
-    long_guard = ""
-    if has_stop:
-        long_guard += " or (inLong and not na(longStop) and low <= longStop)"
-    if has_target:
-        long_guard += " or (inLong and not na(longTarget) and high >= longTarget)"
-    short_guard = ""
-    if has_stop:
-        short_guard += " or (inShort and not na(shortStop) and high >= shortStop)"
-    if has_target:
-        short_guard += " or (inShort and not na(shortTarget) and low <= shortTarget)"
-    if long_exit == "false" and not has_stop and not has_target:
-        long_guard += " or bar_index - longBar >= maxBarsInTrade"
-    if short_exit == "false" and not has_stop and not has_target:
-        short_guard += " or bar_index - shortBar >= maxBarsInTrade"
-
-    decls = "\n".join(ctx.decls) or "// (no indicator declarations)"
-    plots = "\n".join(ctx.plots)
+    # exit-why booleans (each labelled in the signal reasons)
+    long_hits, short_hits = [], []
+    if do_long:
+        long_hits.append("longStopHit = inLong and not na(longStop) and low <= longStop" if has_stop else "longStopHit = false")
+        long_hits.append("longTargetHit = inLong and not na(longTarget) and high >= longTarget" if has_target else "longTargetHit = false")
+        long_hits.append(
+            "longMaxBars = bar_index - longBar >= maxBarsInTrade"
+            if long_exit == "false" and not has_stop and not has_target
+            else "longMaxBars = false"
+        )
+    if do_short:
+        short_hits.append("shortStopHit = inShort and not na(shortStop) and high >= shortStop" if has_stop else "shortStopHit = false")
+        short_hits.append("shortTargetHit = inShort and not na(shortTarget) and low <= shortTarget" if has_target else "shortTargetHit = false")
+        short_hits.append(
+            "shortMaxBars = bar_index - shortBar >= maxBarsInTrade"
+            if short_exit == "false" and not has_stop and not has_target
+            else "shortMaxBars = false"
+        )
 
     L = []
     L.append("//@version=6")
@@ -703,13 +807,13 @@ def generate_indicator(strategy: dict) -> str:
     L.append("")
     L.append(_header(strategy))
     L.append("")
-    L.append("// ── Inputs ─────────────────────────────────────────────────────────")
+    L.append("// ┌─ 1 · INPUTS ─────────────────────────────────────────────────────")
     L.append("maxBarsInTrade = input.int(100, 'Max bars in trade', minval=5)")
     L.append("")
-    L.append("// ── Indicator computations ────────────────────────────────────────")
-    L.append(decls)
+    L.append("// ┌─ 2 · INDICATOR COMPUTATIONS ─────────────────────────────────────")
+    L.extend(ctx.decls or ["// (no indicator computations)"])
     L.append("")
-    L.append("// ── Trade state ───────────────────────────────────────────────────")
+    L.append("// ┌─ 3 · TRADE STATE ────────────────────────────────────────────────")
     if do_long:
         L += [
             "var bool  inLong     = false",
@@ -726,24 +830,37 @@ def generate_indicator(strategy: dict) -> str:
             "var float shortTarget = na",
             "var int   shortBar    = na",
         ]
+    L.append('var string posReason = "—"   // why the current position is open')
     L.append("")
-    L.append("// ── Conditions ────────────────────────────────────────────────────")
     if do_long:
-        L += [
-            f"longCond  = {long_cond}",
-            f"longExitCond = {long_exit}",
-            "longTrigger = longCond and not inLong",
-            f"longExitTrigger = inLong and (longExitCond{long_guard})",
-        ]
+        L.append("// ┌─ 4 · LONG BLOCK ────── conditions · reasons · engine ─────────────")
+        L.append(f"longCond      = {long_cond}")
+        L.append(f"longExitCond  = {long_exit}")
+        L.append(f'longReason    = "{long_reason}"   // shown on every BUY label')
+        L.append(f'longExitMsg   = "{long_exit_msg}"')
+        L.extend(long_hits)
+        L.append(
+            "longExitReason = longExitCond ? longExitMsg : longStopHit ? \"Stop hit\" "
+            ": longTargetHit ? \"Target hit\" : \"Max bars in trade\""
+        )
+        L.append("longTrigger     = longCond and not inLong")
+        L.append("longExitTrigger = inLong and (longExitCond or longStopHit or longTargetHit or longMaxBars)")
+        L.append("")
     if do_short:
-        L += [
-            f"shortCond  = {short_cond}",
-            f"shortExitCond = {short_exit}",
-            "shortTrigger = shortCond and not inShort",
-            f"shortExitTrigger = inShort and (shortExitCond{short_guard})",
-        ]
-    L.append("")
-    L.append("// ── Position engine ───────────────────────────────────────────────")
+        L.append("// ┌─ 5 · SHORT BLOCK ───── conditions · reasons · engine ─────────────")
+        L.append(f"shortCond      = {short_cond}")
+        L.append(f"shortExitCond  = {short_exit}")
+        L.append(f'shortReason    = "{short_reason}"   // shown on every SHORT label')
+        L.append(f'shortExitMsg   = "{short_exit_msg}"')
+        L.extend(short_hits)
+        L.append(
+            "shortExitReason = shortExitCond ? shortExitMsg : shortStopHit ? \"Stop hit\" "
+            ": shortTargetHit ? \"Target hit\" : \"Max bars in trade\""
+        )
+        L.append("shortTrigger     = shortCond and not inShort")
+        L.append("shortExitTrigger = inShort and (shortExitCond or shortStopHit or shortTargetHit or shortMaxBars)")
+        L.append("")
+    L.append("// ┌─ 6 · POSITION ENGINE ── entries · exits · reason labels · alerts ──")
     if do_long and do_short:
         L += [
             "// flip: long signal while short → cover first, then enter long",
@@ -753,6 +870,7 @@ def generate_indicator(strategy: dict) -> str:
             "    shortBar := na",
             "    shortStop := na",
             "    shortTarget := na",
+            '    posReason := "—"',
             f"    alert({cover_msg!r}, alert.freq_once_per_bar_close)",
             "",
             "// flip: short signal while long → sell first, then enter short",
@@ -762,54 +880,67 @@ def generate_indicator(strategy: dict) -> str:
             "    longBar := na",
             "    longStop := na",
             "    longTarget := na",
+            '    posReason := "—"',
             f"    alert({sell_msg!r}, alert.freq_once_per_bar_close)",
             "",
         ]
     if do_long:
         L += [
+            "// — long entry",
             "if longTrigger",
             "    inLong := true",
             "    longEntry := close",
             "    longBar := bar_index",
             *[f"    {a}" for a in long_stop_assigns],
             f"    {long_target_assign}",
+            "    posReason := longReason",
+            f'    label.new(bar_index, low, "▲ BUY\\n" + longReason, style=label.style_label_up, color=color.new(#26a69a, 100), textcolor=color.white, size=size.small, yloc=yloc.belowbar)',
             f"    alert({buy_msg!r}, alert.freq_once_per_bar_close)",
             "",
+            "// — long exit",
             "if longExitTrigger",
             "    inLong := false",
             "    longEntry := na",
             "    longBar := na",
             "    longStop := na",
             "    longTarget := na",
+            '    posReason := "—"',
+            f'    label.new(bar_index, high, "▼ SELL\\n" + longExitReason, style=label.style_label_down, color=color.new(#ef5350, 100), textcolor=color.white, size=size.small, yloc=yloc.abovebar)',
             f"    alert({sell_msg!r}, alert.freq_once_per_bar_close)",
             "",
         ]
     if do_short:
         L += [
+            "// — short entry",
             "if shortTrigger",
             "    inShort := true",
             "    shortEntry := close",
             "    shortBar := bar_index",
             *[f"    {a}" for a in short_stop_assigns],
             f"    {short_target_assign}",
+            "    posReason := shortReason",
+            f'    label.new(bar_index, high, "▼ SHORT\\n" + shortReason, style=label.style_label_down, color=color.new(#ff7043, 100), textcolor=color.white, size=size.small, yloc=yloc.abovebar)',
             f"    alert({short_msg!r}, alert.freq_once_per_bar_close)",
             "",
+            "// — short exit (cover)",
             "if shortExitTrigger",
             "    inShort := false",
             "    shortEntry := na",
             "    shortBar := na",
             "    shortStop := na",
             "    shortTarget := na",
+            '    posReason := "—"',
+            f'    label.new(bar_index, low, "▲ COVER\\n" + shortExitReason, style=label.style_label_up, color=color.new(#42a5f5, 100), textcolor=color.white, size=size.small, yloc=yloc.belowbar)',
             f"    alert({cover_msg!r}, alert.freq_once_per_bar_close)",
             "",
         ]
-    L.append("// ── Visuals ───────────────────────────────────────────────────────")
+    L.append("// ┌─ 7 · VISUALS ────────── arrows · background · stop/target levels ───")
     if do_long:
-        L.append("plotshape(longTrigger, 'BUY', style=shape.triangleup, location=location.belowbar, color=color.new(#26a69a, 0), size=size.small)")
-        L.append("plotshape(longExitTrigger, 'SELL', style=shape.triangledown, location=location.abovebar, color=color.new(#ef5350, 0), size=size.small)")
+        L.append("plotshape(longTrigger, 'BUY', style=shape.triangleup, location=location.belowbar, color=color.new(#26a69a, 0), size=size.tiny)")
+        L.append("plotshape(longExitTrigger, 'SELL', style=shape.triangledown, location=location.abovebar, color=color.new(#ef5350, 0), size=size.tiny)")
     if do_short:
-        L.append("plotshape(shortTrigger, 'SHORT', style=shape.triangledown, location=location.abovebar, color=color.new(#ff7043, 0), size=size.small)")
-        L.append("plotshape(shortExitTrigger, 'COVER', style=shape.triangleup, location=location.belowbar, color=color.new(#42a5f5, 0), size=size.small)")
+        L.append("plotshape(shortTrigger, 'SHORT', style=shape.triangledown, location=location.abovebar, color=color.new(#ff7043, 0), size=size.tiny)")
+        L.append("plotshape(shortExitTrigger, 'COVER', style=shape.triangleup, location=location.belowbar, color=color.new(#42a5f5, 0), size=size.tiny)")
     if do_long and do_short:
         L.append("bgcolor(inLong ? color.new(#26a69a, 92) : inShort ? color.new(#ef5350, 92) : na)")
     elif do_long:
@@ -825,11 +956,48 @@ def generate_indicator(strategy: dict) -> str:
     if do_short and has_target:
         L.append("plot(inShort ? shortTarget : na, 'Short target', style=plot.style_linebr, color=color.new(#42a5f5, 20), linewidth=2)")
     L.append("")
-    if plots:
-        L.append("// ── Indicator lines ───────────────────────────────────────────────")
-        L.append(plots)
+    if ctx.plots:
+        L.append("// ┌─ 8 · INDICATOR LINES ──────────────────────────────────────────────")
+        L.extend(ctx.plots)
         L.append("")
-    L.append("// ── Alerts → brain webhook ────────────────────────────────────────")
+    # live position-panel cell expressions (python-built, per side config)
+    if do_long and do_short:
+        pos_expr = 'inLong ? "LONG ▲" : inShort ? "SHORT ▼" : "FLAT —"'
+        pos_color = "inLong ? color.new(#26a69a, 0) : inShort ? color.new(#ef5350, 0) : color.new(#787b86, 0)"
+        entry_expr = 'inLong ? str.tostring(longEntry) : inShort ? str.tostring(shortEntry) : "—"'
+        stop_expr = 'inLong ? str.tostring(longStop) : inShort ? str.tostring(shortStop) : "—"'
+        target_expr = 'inLong ? str.tostring(longTarget) : inShort ? str.tostring(shortTarget) : "—"'
+    elif do_long:
+        pos_expr = 'inLong ? "LONG ▲" : "FLAT —"'
+        pos_color = "inLong ? color.new(#26a69a, 0) : color.new(#787b86, 0)"
+        entry_expr = 'inLong ? str.tostring(longEntry) : "—"'
+        stop_expr = 'inLong ? str.tostring(longStop) : "—"'
+        target_expr = 'inLong ? str.tostring(longTarget) : "—"'
+    else:
+        pos_expr = 'inShort ? "SHORT ▼" : "FLAT —"'
+        pos_color = "inShort ? color.new(#ef5350, 0) : color.new(#787b86, 0)"
+        entry_expr = 'inShort ? str.tostring(shortEntry) : "—"'
+        stop_expr = 'inShort ? str.tostring(shortStop) : "—"'
+        target_expr = 'inShort ? str.tostring(shortTarget) : "—"'
+
+    L.append("// ┌─ 9 · POSITION PANEL ── live table (top-right) ─────────────────────")
+    L.append("var table posTable = table.new(position.top_right, 2, 6, bgcolor=color.new(#1e222d, 90), border_width=1, border_color=color.new(#363a45, 100))")
+    L.append("if barstate.isfirst")
+    L.append("    table.merge_cells(posTable, 0, 0, 1, 0)")
+    L.append("if barstate.islast")
+    L.append(f'    table.cell(posTable, 0, 0, "TRADING BRAIN · {name}", text_color=color.new(#2962ff, 0), text_size=size.small)')
+    L.append('    table.cell(posTable, 0, 1, "Position", text_color=color.new(#787b86, 0), text_size=size.small)')
+    L.append(f"    table.cell(posTable, 1, 1, {pos_expr}, text_color={pos_color}, text_size=size.small)")
+    L.append('    table.cell(posTable, 0, 2, "Entry", text_color=color.new(#787b86, 0), text_size=size.small)')
+    L.append(f"    table.cell(posTable, 1, 2, {entry_expr}, text_size=size.small)")
+    L.append('    table.cell(posTable, 0, 3, "Stop", text_color=color.new(#787b86, 0), text_size=size.small)')
+    L.append(f"    table.cell(posTable, 1, 3, {stop_expr}, text_color=color.new(#ef5350, 0), text_size=size.small)")
+    L.append('    table.cell(posTable, 0, 4, "Target", text_color=color.new(#787b86, 0), text_size=size.small)')
+    L.append(f"    table.cell(posTable, 1, 4, {target_expr}, text_color=color.new(#26a69a, 0), text_size=size.small)")
+    L.append('    table.cell(posTable, 0, 5, "Reason", text_color=color.new(#787b86, 0), text_size=size.small)')
+    L.append("    table.cell(posTable, 1, 5, posReason, text_size=size.small)")
+    L.append("")
+    L.append("// ┌─ 10 · ALERTS ──────── wire these to your brain webhook ─────────────")
     if do_long:
         L.append(f'alertcondition(longCond, "Brain BUY — {name}", message={buy_msg!r})')
         L.append(f'alertcondition(longExitCond, "Brain SELL — {name}", message={sell_msg!r})')

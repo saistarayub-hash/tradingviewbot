@@ -30,6 +30,7 @@ STOP_PATTERNS = {
 }
 
 INTENTS = {
+    "apply": ("Applying 💪",),
     "help": ("Can do 👇",),
     "status": ("Brain status 📊",),
     "learn": ("Learning mode 🧠",),
@@ -78,6 +79,8 @@ def detect_intent(text: str) -> str:
         return "greet"
     if re.search(r"\b(thanks|thank you|thx)\b", t):
         return "thanks"
+    if re.search(r"\bapply\b", t):
+        return "apply"
     if re.search(r"\b(help|what can you do|how does this work|how do i|commands)\b", t):
         return "help"
     if re.search(r"\b(status|current strategy|what.?s your strategy|show strategy|brain state)\b", t):
@@ -91,8 +94,40 @@ def detect_intent(text: str) -> str:
     return "chat"
 
 
+STRATEGY_HINT = re.compile(
+    r"\b(ema|sma|vwap|macd|rsi|bollinger|atr|ichimoku|supertrend|adx|crossover|crosses?"
+    r"|breakout|breakdown|stop[- ]?loss|take[- ]?profit|risk[- ]?reward|entry|exit|"
+    r"scalp|strategy|setup|indicator|signal|moving average|long\s+when|short\s+when)\b",
+    re.IGNORECASE,
+)
+
+
+def is_strategy_text(text: str) -> bool:
+    """True when a chat message looks like the user is describing a strategy
+    directly (no video link needed)."""
+    t = (text or "").strip()
+    return len(t) >= 24 and bool(STRATEGY_HINT.search(t))
+
+
+SHORT_CTX_RE = re.compile(
+    r"\b(short signal|short entry|go\s+short|shorting|short\s+(?:when|if|on|at|the)"
+    r"|open(?:ing)?\s+a\s+short|short\s+position|short\s+trade)\b"
+)
+
+
 def _nums(pattern: str, text: str):
     return [float(x) for x in re.findall(pattern, text)]
+
+
+def _dedupe(rules: list[dict]) -> list[dict]:
+    """Keep the first occurrence of each rule id."""
+    seen: set[str] = set()
+    out = []
+    for r in rules:
+        if r["id"] not in seen:
+            seen.add(r["id"])
+            out.append(r)
+    return out
 
 
 def _first_num(pattern: str, text: str, default):
@@ -103,6 +138,8 @@ def _first_num(pattern: str, text: str, default):
 def extract_heuristic(text: str) -> dict:
     t = normalize_numbers(text or "")
     entry, exits, filters = [], [], []
+    short_extra: list[dict] = []
+    short_filters_direct: list[dict] = []
     notes: list[str] = []
 
     # ── Moving-average crossovers ──────────────────────────────────────
@@ -120,9 +157,20 @@ def extract_heuristic(text: str) -> dict:
         seen_pairs.add(pair)
         entry.append({"id": "ema_cross_up", "params": {"fast": fast, "slow": slow}})
         exits.append({"id": "ema_cross_down", "params": {"fast": fast, "slow": slow}})
+    # EMA stack chain ("10 EMA above the 20 above the 50") — computed first
+    # so the single-EMA filter below can ignore those spans
+    chain = re.search(
+        r"\b(\d+)\s*(?:period\s*)?ema\b(?:\s+is)?\s+above\s+(?:the\s+)?"
+        r"(\d+)\s*(?:period\s*)?ema\b(?:\s+is)?\s+above\s+(?:the\s+)?"
+        r"(\d+)\s*(?:period\s*)?ema\b", t
+    )
+    stack_kw = bool(re.search(r"\bema\s*stack|stacked\s*emas|stacked\s+moving\s+averages\b", t))
+
     # single-EMA mentions: "price above the 200 ema" etc. (NOT "crosses above")
     for m in re.finditer(r"\b(above|below)\s+the\s+(\d+)\s*(?:period\s*)?ema\b", t):
         if re.search(r"\bcross(?:es|ing)?(?:\s+back)?\s*$", t[max(0, m.start() - 16):m.start()]):
+            continue
+        if chain and chain.start() <= m.start() <= chain.end():
             continue
         filters.append({"id": f"price_{m.group(1)}_ema", "params": {"length": int(m.group(2))}})
 
@@ -136,16 +184,24 @@ def extract_heuristic(text: str) -> dict:
     # ── RSI ────────────────────────────────────────────────────────────
     rsi_len = int(_first_num(r"\brsi\s*(?:\(|with)?\s*(?:a\s+)?(?:length\s+of\s+)?(\d+)", t, 14))
     if re.search(r"\brsi\b", t):
-        below = re.search(r"rsi\s+(?:(?:is|to\s+be)\s+)?(?:below|under|less than|beneath)\s*(\d+)", t)
-        above = re.search(r"rsi\s+(?:(?:is|to\s+be)\s+)?(?:above|over|more than|greater than)\s*(\d+)", t)
+        below_m = re.search(r"rsi\s+(?:(?:is|to\s+be)\s+)?(?:below|under|less than|beneath)\s*(\d+)", t)
+        above_m = re.search(r"rsi\s+(?:(?:is|to\s+be)\s+)?(?:above|over|more than|greater than)\s*(\d+)", t)
+        short_cut_m = SHORT_CTX_RE.search(t)
+        short_cut = short_cut_m.start() if short_cut_m else len(t)
         oversold = re.search(r"rsi\s+(?:(?:is|to\s+be)\s+)?(?:below\s+)?(?:30|oversold)", t)
         overbought = re.search(r"rsi\s+(?:(?:is|to\s+be)\s+)?(?:above\s+)?(?:70|overbought)", t)
-        cross_up = re.search(r"rsi\s+(?:cross(?:es|ing)?\s+)?(?:up|above|back above)\s*(?:through|above)?\s*(\d+)", t)
-        cross_dn = re.search(r"rsi\s+(?:cross(?:es|ing)?\s+)?(?:down|below|back below)\s*(?:through|below)?\s*(\d+)", t)
-        if below:
-            filters.append({"id": "rsi_below", "params": {"length": rsi_len, "level": int(below.group(1))}})
-        if above:
-            filters.append({"id": "rsi_above", "params": {"length": rsi_len, "level": int(above.group(1))}})
+        cross_up = re.search(
+            r"rsi\s+cross(?:es|ing|ed)?\s+(?:up|above|back above)\s*(?:through|above)?\s*(\d+)", t
+        )
+        cross_dn = re.search(
+            r"rsi\s+cross(?:es|ing|ed)?\s+(?:down|below|back below)\s*(?:through|below)?\s*(\d+)", t
+        )
+        if below_m:
+            rule = {"id": "rsi_below", "params": {"length": rsi_len, "level": int(below_m.group(1))}}
+            (short_filters_direct if short_cut_m and below_m.start() >= short_cut else filters).append(rule)
+        if above_m:
+            rule = {"id": "rsi_above", "params": {"length": rsi_len, "level": int(above_m.group(1))}}
+            (short_filters_direct if short_cut_m and above_m.start() >= short_cut else filters).append(rule)
         if oversold and not cross_up:
             entry.append({"id": "rsi_cross_up", "params": {"length": rsi_len, "level": 30}})
             notes.append("Interpreted 'oversold RSI' as RSI crossing back above 30.")
@@ -159,21 +215,28 @@ def extract_heuristic(text: str) -> dict:
 
     # ── Ichimoku ────────────────────────────────────────────────────────
     if re.search(r"\bichimoku\b", t):
-        if re.search(r"above\s+the\s+cloud", t):
+        above_m = re.search(r"above\s+the\s+(?:ichimoku\s+)?cloud", t)
+        below_m = re.search(r"below\s+the\s+(?:ichimoku\s+)?cloud", t)
+        if above_m:
             filters.append({"id": "ichimoku_above_cloud", "params": {}})
-        elif re.search(r"below\s+the\s+cloud", t):
-            filters.append({"id": "ichimoku_below_cloud", "params": {}})
-        else:
+            if not entry:
+                entry.append({"id": "ichimoku_cloud_up", "params": {}})
+        if below_m:
+            window = t[max(0, below_m.start() - 25):below_m.start()]
+            if re.search(r"\b(exit|sell|close(?:s|d)?|cover)\b", window):
+                exits.append({"id": "ichimoku_cloud_down", "params": {}})
+            else:
+                filters.append({"id": "ichimoku_below_cloud", "params": {}})
+                short_extra.append({"id": "ichimoku_cloud_down", "params": {}})
+        if not above_m and not below_m:
             entry.append({"id": "ichimoku_cloud_up", "params": {}})
             exits.append({"id": "ichimoku_cloud_down", "params": {}})
             notes.append("Ichimoku mentioned — used price crossing the cloud up/down as entry/exit.")
+        if not exits:
+            exits.append({"id": "ichimoku_cloud_down", "params": {}})
 
-    # ── EMA stack ("20 above the 50 above the 200") ───────────────────
-    chain = re.search(
-        r"\b(\d+)\s*(?:period\s*)?ema\s+above\s+(?:the\s+)?(\d+)\s*(?:period\s*)?ema"
-        r"\s+above\s+(?:the\s+)?(\d+)\s*(?:period\s*)?ema\b", t
-    )
-    if chain or re.search(r"\bema\s*stack|stacked\s*emas|stacked\s+moving\s+averages\b", t):
+    # ── EMA stack filter ───────────────────────────────────────────────
+    if chain or stack_kw:
         if chain:
             fast, mid, slow = int(chain.group(1)), int(chain.group(2)), int(chain.group(3))
         else:
@@ -217,21 +280,22 @@ def extract_heuristic(text: str) -> dict:
         filters.append({"id": "volume_spike", "params": {}})
 
     # ── Breakout / support / breakdown ─────────────────────────────────
-    short_extra: list[dict] = []
     if re.search(r"\b(breakout|breaks? (?:out )?(?:above|through))\b", t):
         lb = int(_first_num(r"(\d+)\s*(?:bar|day|hour|candle)", t, 20))
         entry.append({"id": "breakout_high", "params": {"lookback": lb}})
-    if re.search(r"\b(breakdown|breaks? (?:down|below))\b", t):
+    for m in re.finditer(r"\bbreakdown\b|\bbreaks?\s+(?:down|below)\b", t):
         lb = int(_first_num(r"(\d+)\s*(?:bar|day|hour|candle)", t, 20))
-        short_extra.append({"id": "breakdown_low", "params": {"lookback": lb}})
+        window = t[max(0, m.start() - 25):m.start()]
+        rule = {"id": "breakdown_low", "params": {"lookback": lb}}
+        if re.search(r"\b(exit|sell|close(?:s|d)?|cover)\b", window):
+            exits.append(rule)              # "exit when price breaks below X" → long exit
+        else:
+            short_extra.append(rule)        # standalone "breaks below" → short entry
     if re.search(r"\b(support bounce|bounces? off (?:the )?support|support level)\b", t):
         entry.append({"id": "support_bounce", "params": {}})
 
     # ── Short-side detection ───────────────────────────────────────────
-    short_hint = bool(re.search(
-        r"\b(short signal|short entry|go\s+short|shorting|short\s+(?:when|if|on|at|the)"
-        r"|open(?:ing)?\s+a\s+short|short\s+position|short\s+trade)\b", t
-    )) or bool(short_extra)
+    short_hint = bool(SHORT_CTX_RE.search(t)) or bool(short_extra)
 
     # ── Stop / target ──────────────────────────────────────────────────
     stop = None
@@ -264,6 +328,10 @@ def extract_heuristic(text: str) -> dict:
     elif rr_after:
         a, b = float(rr_after.group(1)), float(rr_after.group(2) or 1)
         target = {"type": "rr", "params": {"rr": round(a / b, 2)}}
+    elif re.search(r"\btarget\s*(?:of|at|is)?\s*([0-9.]+)\s*r\b|\brr\s*(?:of|at|is)?\s*([0-9.]+)\b", t):
+        m = re.search(r"\btarget\s*(?:of|at|is)?\s*([0-9.]+)\s*r\b|\brr\s*(?:of|at|is)?\s*([0-9.]+)\b", t)
+        rr_val = float(m.group(1) or m.group(2) or 2.0)
+        target = {"type": "rr", "params": {"rr": rr_val}}
     elif re.search(r"\btake profit\b|\btp\b|\bprofit target\b", t):
         pct = _first_num(r"(?:take[- ]?profit|profit target|tp)\s*(?:of|at)?\s*([0-9.]+)\s*%", t, 2.0)
         target = {"type": "percent", "params": {"pct": pct}}
@@ -289,12 +357,20 @@ def extract_heuristic(text: str) -> dict:
             {"id": MIRROR.get(r["id"], r["id"]), "params": dict(r.get("params") or {})}
             for r in exits
         ]
-        short_filters = [
+        direct_ids = {r["id"] for r in short_filters_direct}
+        short_filters = list(short_filters_direct) + [
             {"id": MIRROR.get(r["id"], r["id"]), "params": dict(r.get("params") or {})}
             for r in filters
+            if MIRROR.get(r["id"], r["id"]) not in direct_ids
         ]
         notes.append("Short-side rules were mirrored from the long-side rules.")
     short_entry += short_extra
+    short_entry = _dedupe(short_entry)
+    short_exit = _dedupe(short_exit)
+    short_filters = _dedupe(short_filters)
+    entry = _dedupe(entry)
+    exits = _dedupe(exits)
+    filters = _dedupe(filters)
 
     # ── Timeframe / market ─────────────────────────────────────────────
     tf = None

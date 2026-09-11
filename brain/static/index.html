@@ -49,7 +49,13 @@
   .msg.user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
   .msg.assistant { align-self: flex-start; background: var(--panel); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
   .msg a { color: #82aaff; }
-  .chat-input { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--border); background: var(--panel); }
+  .chat-input { display: flex; gap: 8px; padding: 12px 12px 8px; border-top: 1px solid var(--border); background: var(--panel); }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 12px 10px; background: var(--panel); border-top: 1px solid transparent; }
+  .chip {
+    font-size: 12px; background: var(--panel2); border: 1px solid var(--border);
+    border-radius: 14px; padding: 4px 11px; cursor: pointer; color: var(--muted);
+  }
+  .chip:hover { border-color: var(--accent); color: var(--text); }
   .chat-input input {
     flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text);
     border-radius: 6px; padding: 10px 12px; font-size: 14px;
@@ -120,9 +126,17 @@
   <div class="col chat">
     <div class="chat-box" id="chat"></div>
     <div class="chat-input">
-      <input id="msg" placeholder="Paste a YouTube link, or ask me anything…" autocomplete="off">
+      <input id="msg" placeholder="Describe your strategy… e.g. 'buy when EMA 9 crosses above EMA 21, RSI below 50, stop 2 ATR, target 2R'" autocomplete="off">
       <button id="send" class="primary">Send</button>
-      <button id="demo" title="Feed the brain a built-in demo video (works offline)">🎥 Demo video</button>
+      <button id="demo" title="Feed the brain a built-in demo video (works offline)">🎥 Demo</button>
+    </div>
+    <div class="chips">
+      <button class="chip" onclick="send(document.getElementById('chip-ema').textContent)">📘 EMA cross + RSI (both sides)</button>
+      <button class="chip" onclick="send(document.getElementById('chip-ichimoku').textContent)">⛩️ Ichimoku + EMA stack</button>
+      <button class="chip" onclick="send(document.getElementById('chip-scalp').textContent)">⚡ Breakout scalp</button>
+      <span class="hidden" id="chip-ema">Strategy: buy when the 9 EMA crosses above the 21 EMA and RSI is below 50, exit when the 9 EMA crosses back below. Stop 2 ATR, target 2 to 1 risk reward, 15 minute chart. Also short when the 9 EMA crosses below the 21 EMA with RSI above 50, cover when it crosses back above.</span>
+      <span class="hidden" id="chip-ichimoku">Strategy: long when price closes above the Ichimoku cloud and the 10 EMA is above the 20 EMA above the 50 EMA, exit when it closes below the cloud. Stop 2 ATR, target 2R. 1 hour chart.</span>
+      <span class="hidden" id="chip-scalp">Strategy: long when price breaks above the 20 bar high, exit when price breaks below the 20 bar low. Short when price breaks below the 20 bar low, cover on a 20 bar high breakout. Stop 1.5 ATR, target 2 to 1 risk reward. 5 minute chart.</span>
     </div>
   </div>
 
@@ -378,7 +392,7 @@ $('btn-save').onclick = async () => {
   refresh();
 };
 
-addMessage('assistant', "👋 Hey! I'm your TradingView brain. Paste a **YouTube video link** in chat and I'll watch it, learn the strategy, and generate your indicator.\n\nNo video handy? Click **🎥 Demo video** to see the full pipeline offline.");
+addMessage('assistant', "👋 I'm your TradingView brain — **type your strategy** and I'll build the indicator for you.\n\nDescribe your entries, exits, filters, stop and target in plain English, then paste the generated `pine/indicator.pine` into TradingView. Every BUY/SELL/SHORT/COVER signal on the chart shows a label with the **reasons** it fired.\n\nTry a quick example below the input box, or paste a **YouTube link** and I'll learn from the video instead.");
 refresh();
 </script>
 </body>

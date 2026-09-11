@@ -1,26 +1,27 @@
 # 🧠 Trading Brain — an indicator that learns from videos
 
-A **TradingView indicator** with a **brain**: paste a YouTube video link into the
-chat, the brain watches it (captions), extracts the trading strategy, and
-generates a Pine Script v6 indicator for TradingView. The indicator trades
-**both sides** (BUY/SELL and SHORT/COVER), fires **alert webhooks back to the
-brain**, which logs every signal, measures the results, and proposes
-improvements — that's the learning loop. A live **signal dashboard** shows the
-feed and every completed trade.
+A **TradingView indicator** with a **brain**: type your strategy into the chat
+in plain English, and the brain compiles it into a neat Pine Script v6
+indicator where every BUY/SELL/SHORT/COVER signal shows a **label with the
+reasons it fired**, plus a live position panel on the chart. You can also
+paste a **YouTube video link** and the brain learns the strategy from the
+captions. Alert webhooks feed signals back to the brain, which tracks
+performance and proposes improvements — the learning loop.
 
 ```
 ┌──────────────────────────────┐         ┌──────────────────────────────┐
 │  YOU                          │         │  TRADING BRAIN (this repo)   │
-│  • paste video link in chat   │ ──────▶ │  • fetch YouTube captions    │
-│  • paste indicator into TV    │         │  • extract strategy (LLM or  │
-│  • create 2 alerts → webhook  │         │    offline rule engine)      │
-└──────────────────────────────┘         │  • generate pine/*.pine      │
-                                         └──────────────┬───────────────┘
+│  • type strategy in chat      │ ──────▶ │  • parse rules (engine/LLM) │
+│    "buy when EMA 9 crosses    │         │  • compile pine/*.pine      │
+│     above EMA 21, RSI < 50,   │         │  • every signal labelled    │
+│     stop 2 ATR, target 2R"    │         │    with its reasons         │
+│  • (or paste a YouTube link)  │         └──────────────┬───────────────┘
+└──────────────────────────────┘                        │
                                                         │
 ┌──────────────────────────────┐                       │
 │  TRADINGVIEW                 │  alert webhooks        │
-│  pine/indicator.pine         │ ──── BUY/SELL ───────▶ │
-│  (signals + stop/target)     │         └─▶ learn: win rate, tune risk, suggest
+│  pine/indicator.pine         │ ── BUY/SELL/SHORT/COVER│
+│  signals + reasons + panel   │         └─▶ learn: win rate, suggest, tune
 └──────────────────────────────┘
 ```
 
@@ -34,17 +35,25 @@ python3 -m venv .venv
 ```
 
 Open **http://localhost:8000** → chat UI. Works immediately with **zero API
-keys** (offline rule engine + built-in demo video). Click **🎥 Demo video** to
-see the whole pipeline: transcript → strategy → `pine/indicator.pine`.
+keys** (offline rule engine). The quickest way to use it: **type your
+strategy** in the chat, e.g.
 
-### Feed it a real video
+> buy when the 9 EMA crosses above the 21 EMA and RSI is below 50, exit when
+> it crosses back below. Stop 2 ATR, target 2R. 15 minute chart. Also short
+> when it crosses below with RSI above 50.
 
-Paste a YouTube link with subtitles into the chat, e.g. a strategy tutorial.
-The brain fetches the caption track, extracts the rules, and regenerates:
+…and the brain rebuilds the indicator instantly. Quick-example chips sit under
+the chat box (EMA cross, Ichimoku + EMA stack, breakout scalp).
+
+### Feed it a video instead
+
+Paste a YouTube link with subtitles into the chat (e.g. a strategy tutorial).
+The brain fetches the caption track, extracts the rules, and regenerates the
+scripts — same output as typing the strategy.
 
 | File | What it is |
 |---|---|
-| `pine/indicator.pine` | The **indicator**: plots BUY/SELL/SHORT/COVER arrows, tracks stop & target levels per side, flips positions, fires 4 `alertcondition`s you can attach webhooks to |
+| `pine/indicator.pine` | The **indicator**, organised in neat blocks: **LONG BLOCK** / **SHORT BLOCK** conditions + engines, on-chart **labels on every signal showing the reasons** it fired, a live **position panel** (top-right table), stop/target lines, and 4 `alertcondition`s |
 | `pine/strategy.pine` | The **same rules** as a TradingView `strategy()` script (long + short) → use the Strategy Tester to backtest |
 | `data/strategy.json` | The canonical strategy the brain "knows" (rules, side, stop, target, revision) |
 
