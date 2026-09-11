@@ -913,9 +913,90 @@ def generate_indicator(strategy: dict) -> str:
             else "shortMaxBars = false"
         )
 
+    # auto position drawing (TradingView-style long/short position block):
+    # entry line + stop/target lines + shaded zones while the trade runs;
+    # on close the block is finished and the trade is auto-marked with its P&L.
+    draw_open_long = [
+        "    tradeEntry := line.new(bar_index, close, bar_index, close, color=color.new(#2962ff, 25), width=2)",
+    ]
+    draw_open_short = [
+        "    tradeEntry := line.new(bar_index, close, bar_index, close, color=color.new(#2962ff, 25), width=2)",
+    ]
+    if has_stop:
+        draw_open_long += [
+            "    tradeStop := line.new(bar_index, longStop, bar_index, longStop, color=color.new(#ef5350, 55), style=line.style_dashed)",
+            "    tradeRiskBox := box.new(bar_index, close, bar_index, longStop, bgcolor=color.new(#ef5350, 94), border_width=0)",
+        ]
+        draw_open_short += [
+            "    tradeStop := line.new(bar_index, shortStop, bar_index, shortStop, color=color.new(#ef5350, 55), style=line.style_dashed)",
+            "    tradeRiskBox := box.new(bar_index, shortStop, bar_index, close, bgcolor=color.new(#ef5350, 94), border_width=0)",
+        ]
+    if has_target:
+        draw_open_long += [
+            "    tradeTarget := line.new(bar_index, longTarget, bar_index, longTarget, color=color.new(#26a69a, 55), style=line.style_dashed)",
+            "    tradeRewardBox := box.new(bar_index, longTarget, bar_index, close, bgcolor=color.new(#26a69a, 94), border_width=0)",
+        ]
+        draw_open_short += [
+            "    tradeTarget := line.new(bar_index, shortTarget, bar_index, shortTarget, color=color.new(#26a69a, 55), style=line.style_dashed)",
+            "    tradeRewardBox := box.new(bar_index, close, bar_index, shortTarget, bgcolor=color.new(#26a69a, 94), border_width=0)",
+        ]
+    draw_extend = [
+        "if inLong or inShort",
+        "    line.set_x2(tradeEntry, bar_index)",
+    ]
+    if has_stop:
+        draw_extend += [
+            "    line.set_x2(tradeStop, bar_index)",
+            "    box.set_right(tradeRiskBox, bar_index)",
+        ]
+    if has_target:
+        draw_extend += [
+            "    line.set_x2(tradeTarget, bar_index)",
+            "    box.set_right(tradeRewardBox, bar_index)",
+        ]
+    draw_close_long = [
+        "    line.set_x2(tradeEntry, bar_index)",
+    ]
+    draw_close_short = [
+        "    line.set_x2(tradeEntry, bar_index)",
+    ]
+    if has_stop:
+        draw_close_long += [
+            "    line.set_x2(tradeStop, bar_index)",
+            "    box.delete(tradeRiskBox)",
+        ]
+        draw_close_short += [
+            "    line.set_x2(tradeStop, bar_index)",
+            "    box.delete(tradeRiskBox)",
+        ]
+    if has_target:
+        draw_close_long += [
+            "    line.set_x2(tradeTarget, bar_index)",
+            "    box.delete(tradeRewardBox)",
+        ]
+        draw_close_short += [
+            "    line.set_x2(tradeTarget, bar_index)",
+            "    box.delete(tradeRewardBox)",
+        ]
+    draw_close_long += [
+        "    tradeExit := line.new(longBar, close, bar_index, close, color=color.new(#d1d4dc, 35), width=2)",
+    ]
+    draw_close_short += [
+        "    tradeExit := line.new(shortBar, close, bar_index, close, color=color.new(#d1d4dc, 35), width=2)",
+    ]
+    long_pnl_lines = [
+        "    longPnlR = na(longStop) or na(longEntry) ? na : (close - longEntry) / (longEntry - longStop)",
+        "    longPnlPct = na(longEntry) ? na : (close - longEntry) / longEntry * 100.0",
+        '    longPnlTxt = na(longPnlR) ? "" : (longPnlR >= 0 ? "+" : "") + str.tostring(longPnlR, "#.##") + "R · " + (longPnlPct >= 0 ? "+" : "") + str.tostring(longPnlPct, "#.##") + "%"',
+    ]
+    short_pnl_lines = [
+        "    shortPnlR = na(shortStop) or na(shortEntry) ? na : (shortEntry - close) / (shortStop - shortEntry)",
+        "    shortPnlPct = na(shortEntry) ? na : (shortEntry - close) / shortEntry * 100.0",
+        '    shortPnlTxt = na(shortPnlR) ? "" : (shortPnlR >= 0 ? "+" : "") + str.tostring(shortPnlR, "#.##") + "R · " + (shortPnlPct >= 0 ? "+" : "") + str.tostring(shortPnlPct, "#.##") + "%"',
+    ]
     L = []
     L.append("//@version=6")
-    L.append(f'indicator("{name} [Brain]", shorttitle="Brain {_slug(name)}", overlay=true, max_labels_count=500)')
+    L.append(f'indicator("{name} [Brain]", shorttitle="{_shorttitle(name)}", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500)')
     L.append("")
     L.append(_header(strategy))
     L.append("")
@@ -933,7 +1014,6 @@ def generate_indicator(strategy: dict) -> str:
             "var float longStop   = na",
             "var float longTarget = na",
             "var int   longBar    = na",
-            "var long_position brainLongPos = na   // TradingView long-position tool",
         ]
     if do_short:
         L += [
@@ -942,8 +1022,16 @@ def generate_indicator(strategy: dict) -> str:
             "var float shortStop   = na",
             "var float shortTarget = na",
             "var int   shortBar    = na",
-            "var short_position brainShortPos = na  // TradingView short-position tool",
         ]
+    L.append("// auto position drawing — entry · stop · target lines + P&L marks")
+    L += [
+        "var line tradeEntry     = na   // entry price line",
+        "var line tradeStop      = na   // stop line",
+        "var line tradeTarget    = na   // take-profit line",
+        "var line tradeExit      = na   // final price line of a finished trade",
+        "var box  tradeRiskBox   = na   // shaded entry→stop zone",
+        "var box  tradeRewardBox = na   // shaded entry→target zone",
+    ]
     L.append('var string posReason = "—"   // why the current position is open')
     L.append("")
     if do_long:
@@ -975,35 +1063,38 @@ def generate_indicator(strategy: dict) -> str:
         L.append("shortExitTrigger = inShort and (shortExitCond or shortStopHit or shortTargetHit or shortMaxBars) and barstate.isconfirmed")
         L.append("")
     L.append("// ┌─ 6 · POSITION ENGINE ── entries · exits · reason labels · alerts ──")
-    L.append("// (the position tools take the stop/target assigned in the entry block)")
+    L.append("// (the position drawing takes the stop/target assigned in the entry block)")
+    L.append("// keep the open position drawing extended to the current bar")
+    L.extend(draw_extend)
+    L.append("")
     if do_long and do_short:
         L += [
             "// flip: long signal while short → cover first, then enter long",
             "if longTrigger and inShort",
-            "    if not na(brainShortPos)",
-            "        short_position.close(brainShortPos, bar_index, close)",
-            "    brainShortPos := na",
+            "    // — close the drawing and auto-mark the finished short trade",
+            *short_pnl_lines,
+            *draw_close_short,
             "    inShort := false",
             "    shortEntry := na",
             "    shortBar := na",
             "    shortStop := na",
             "    shortTarget := na",
             '    posReason := "—"',
-            f'    label.new(bar_index, low, "▲ COVER\\n" + longReason, style=label.style_label_up, color=#2a2e39, textcolor=#42a5f5, size=size.small, yloc=yloc.belowbar)',
+            f'    label.new(bar_index, low, "▲ COVER\\n" + longReason + (shortPnlTxt != "" ? "\\nP&L " + shortPnlTxt : ""), style=label.style_label_up, color=#2a2e39, textcolor=not na(shortPnlR) and shortPnlR >= 0 ? color.new(#26a69a, 0) : color.new(#ef5350, 0), size=size.small, yloc=yloc.belowbar)',
             f"    alert({cover_msg!r}, alert.freq_once_per_bar_close)",
             "",
             "// flip: short signal while long → sell first, then enter short",
             "if shortTrigger and inLong",
-            "    if not na(brainLongPos)",
-            "        long_position.close(brainLongPos, bar_index, close)",
-            "    brainLongPos := na",
+            "    // — close the drawing and auto-mark the finished long trade",
+            *long_pnl_lines,
+            *draw_close_long,
             "    inLong := false",
             "    longEntry := na",
             "    longBar := na",
             "    longStop := na",
             "    longTarget := na",
             '    posReason := "—"',
-            f'    label.new(bar_index, high, "▼ SELL\\n" + shortReason, style=label.style_label_down, color=#2a2e39, textcolor=#ef5350, size=size.small, yloc=yloc.abovebar)',
+            f'    label.new(bar_index, high, "▼ SELL\\n" + shortReason + (longPnlTxt != "" ? "\\nP&L " + longPnlTxt : ""), style=label.style_label_down, color=#2a2e39, textcolor=not na(longPnlR) and longPnlR >= 0 ? color.new(#26a69a, 0) : color.new(#ef5350, 0), size=size.small, yloc=yloc.abovebar)',
             f"    alert({sell_msg!r}, alert.freq_once_per_bar_close)",
             "",
         ]
@@ -1016,23 +1107,24 @@ def generate_indicator(strategy: dict) -> str:
             "    longBar := bar_index",
             *[f"    {a}" for a in long_stop_assigns],
             f"    {long_target_assign}",
-            "    brainLongPos := long_position.new(bar_index, close, na(longStop) ? close - ta.atr(14) * 2.0 : longStop, na(longTarget) ? (na(longStop) ? close + ta.atr(14) * 4.0 : close + (close - longStop) * 2.0) : longTarget)",
+            "    // — open the auto position drawing (entry · stop · target)",
+            *draw_open_long,
             "    posReason := longReason",
             f'    label.new(bar_index, low, "▲ BUY\\n" + longReason, style=label.style_label_up, color=#2a2e39, textcolor=#26a69a, size=size.small, yloc=yloc.belowbar)',
             f"    alert({buy_msg!r}, alert.freq_once_per_bar_close)",
             "",
             "// — long exit",
             "if longExitTrigger and inLong",
-            "    if not na(brainLongPos)",
-            "        long_position.close(brainLongPos, bar_index, close)",
-            "    brainLongPos := na",
+            "    // — close the drawing and auto-mark the trade with its P&L",
+            *long_pnl_lines,
+            *draw_close_long,
             "    inLong := false",
             "    longEntry := na",
             "    longBar := na",
             "    longStop := na",
             "    longTarget := na",
             '    posReason := "—"',
-            f'    label.new(bar_index, high, "▼ SELL\\n" + longExitReason, style=label.style_label_down, color=#2a2e39, textcolor=#ef5350, size=size.small, yloc=yloc.abovebar)',
+            f'    label.new(bar_index, high, "▼ SELL\\n" + longExitReason + (longPnlTxt != "" ? "\\nP&L " + longPnlTxt : ""), style=label.style_label_down, color=#2a2e39, textcolor=not na(longPnlR) and longPnlR >= 0 ? color.new(#26a69a, 0) : color.new(#ef5350, 0), size=size.small, yloc=yloc.abovebar)',
             f"    alert({sell_msg!r}, alert.freq_once_per_bar_close)",
             "",
         ]
@@ -1045,28 +1137,29 @@ def generate_indicator(strategy: dict) -> str:
             "    shortBar := bar_index",
             *[f"    {a}" for a in short_stop_assigns],
             f"    {short_target_assign}",
-            "    brainShortPos := short_position.new(bar_index, close, na(shortStop) ? close + ta.atr(14) * 2.0 : shortStop, na(shortTarget) ? (na(shortStop) ? close - ta.atr(14) * 4.0 : close - (shortStop - close) * 2.0) : shortTarget)",
+            "    // — open the auto position drawing (entry · stop · target)",
+            *draw_open_short,
             "    posReason := shortReason",
             f'    label.new(bar_index, high, "▼ SHORT\\n" + shortReason, style=label.style_label_down, color=#2a2e39, textcolor=#ff7043, size=size.small, yloc=yloc.abovebar)',
             f"    alert({short_msg!r}, alert.freq_once_per_bar_close)",
             "",
             "// — short exit (cover)",
             "if shortExitTrigger and inShort",
-            "    if not na(brainShortPos)",
-            "        short_position.close(brainShortPos, bar_index, close)",
-            "    brainShortPos := na",
+            "    // — close the drawing and auto-mark the trade with its P&L",
+            *short_pnl_lines,
+            *draw_close_short,
             "    inShort := false",
             "    shortEntry := na",
             "    shortBar := na",
             "    shortStop := na",
             "    shortTarget := na",
             '    posReason := "—"',
-            f'    label.new(bar_index, low, "▲ COVER\\n" + shortExitReason, style=label.style_label_up, color=#2a2e39, textcolor=#42a5f5, size=size.small, yloc=yloc.belowbar)',
+            f'    label.new(bar_index, low, "▲ COVER\\n" + shortExitReason + (shortPnlTxt != "" ? "\\nP&L " + shortPnlTxt : ""), style=label.style_label_up, color=#2a2e39, textcolor=not na(shortPnlR) and shortPnlR >= 0 ? color.new(#26a69a, 0) : color.new(#ef5350, 0), size=size.small, yloc=yloc.belowbar)',
             f"    alert({cover_msg!r}, alert.freq_once_per_bar_close)",
             "",
         ]
-    L.append("// ┌─ 7 · VISUALS ────────── position tools draw entry · stop · target ──")
-    L.append("// (each trade is marked automatically by the long/short position tool)")
+    L.append("// ┌─ 7 · VISUALS ─────── auto position drawing · entry / stop / target ──")
+    L.append("// (finished trades stay on the chart, auto-marked with their P&L)")
     L.append("")
     if ctx.plots:
         L.append("// ┌─ 8 · INDICATOR LINES ──────────────────────────────────────────────")
@@ -1153,7 +1246,7 @@ def generate_strategy(strategy: dict) -> str:
     L = []
     L.append("//@version=6")
     L.append(
-        f'strategy("{name} [Brain BT]", shorttitle="Brain {_slug(name)} BT", '
+        f'strategy("{name} [Brain BT]", shorttitle="{_shorttitle(name)}", '
         f'overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, '
         f'default_qty_value=100, commission_type=strategy.commission.percent, '
         f'commission_value=0.1, pyramiding=0)'
@@ -1242,6 +1335,14 @@ def generate_strategy(strategy: dict) -> str:
         L.append("// ── Indicator lines ───────────────────────────────────────────────")
         L.extend(ctx.plots)
     return "\n".join(L) + "\n"
+
+
+def _shorttitle(name: str) -> str:
+    """Short display title (TradingView caps shorttitle at 10 characters)."""
+    initials = "".join(w[0] for w in re.findall(r"[A-Za-z0-9]+", name))[:4]
+    if len(initials) >= 2:
+        return "Brain " + initials
+    return "Brain " + _slug(name)[:4]
 
 
 def _slug(name: str) -> str:
