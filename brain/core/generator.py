@@ -570,8 +570,8 @@ def _half_trend_engine(ctx, p) -> tuple[str, str, str, str]:
     ctx.plot(line, "HalfTrend",
              color=f"{trend} == 0 ? color.new(#26a69a, 0) : color.new(#ef5350, 0)",
              linewidth=3)
-    ctx.plot(atr_hi, "HalfTrend band high", color="color.new(#ef5350, 78)")
-    ctx.plot(atr_lo, "HalfTrend band low", color="color.new(#26a69a, 78)")
+    ctx.plot(atr_hi, "HalfTrend band high", color="color.new(#ef5350, 90)")
+    ctx.plot(atr_lo, "HalfTrend band low", color="color.new(#26a69a, 90)")
     return names
 
 
@@ -983,6 +983,7 @@ def generate_indicator(strategy: dict) -> str:
             "    shortStop := na",
             "    shortTarget := na",
             '    posReason := "—"',
+            f'    label.new(bar_index, low, "▲ COVER\\n" + longReason, style=label.style_label_up, color=#2a2e39, textcolor=#42a5f5, size=size.small, yloc=yloc.belowbar)',
             f"    alert({cover_msg!r}, alert.freq_once_per_bar_close)",
             "",
             "// flip: short signal while long → sell first, then enter short",
@@ -993,6 +994,7 @@ def generate_indicator(strategy: dict) -> str:
             "    longStop := na",
             "    longTarget := na",
             '    posReason := "—"',
+            f'    label.new(bar_index, high, "▼ SELL\\n" + shortReason, style=label.style_label_down, color=#2a2e39, textcolor=#ef5350, size=size.small, yloc=yloc.abovebar)',
             f"    alert({sell_msg!r}, alert.freq_once_per_bar_close)",
             "",
         ]
@@ -1006,18 +1008,18 @@ def generate_indicator(strategy: dict) -> str:
             *[f"    {a}" for a in long_stop_assigns],
             f"    {long_target_assign}",
             "    posReason := longReason",
-            f'    label.new(bar_index, low, "▲ BUY\\n" + longReason, style=label.style_label_up, color=color.new(#26a69a, 100), textcolor=color.white, size=size.small, yloc=yloc.belowbar)',
+            f'    label.new(bar_index, low, "▲ BUY\\n" + longReason, style=label.style_label_up, color=#2a2e39, textcolor=#26a69a, size=size.small, yloc=yloc.belowbar)',
             f"    alert({buy_msg!r}, alert.freq_once_per_bar_close)",
             "",
             "// — long exit",
-            "if longExitTrigger",
+            "if longExitTrigger and inLong",
             "    inLong := false",
             "    longEntry := na",
             "    longBar := na",
             "    longStop := na",
             "    longTarget := na",
             '    posReason := "—"',
-            f'    label.new(bar_index, high, "▼ SELL\\n" + longExitReason, style=label.style_label_down, color=color.new(#ef5350, 100), textcolor=color.white, size=size.small, yloc=yloc.abovebar)',
+            f'    label.new(bar_index, high, "▼ SELL\\n" + longExitReason, style=label.style_label_down, color=#2a2e39, textcolor=#ef5350, size=size.small, yloc=yloc.abovebar)',
             f"    alert({sell_msg!r}, alert.freq_once_per_bar_close)",
             "",
         ]
@@ -1031,18 +1033,18 @@ def generate_indicator(strategy: dict) -> str:
             *[f"    {a}" for a in short_stop_assigns],
             f"    {short_target_assign}",
             "    posReason := shortReason",
-            f'    label.new(bar_index, high, "▼ SHORT\\n" + shortReason, style=label.style_label_down, color=color.new(#ff7043, 100), textcolor=color.white, size=size.small, yloc=yloc.abovebar)',
+            f'    label.new(bar_index, high, "▼ SHORT\\n" + shortReason, style=label.style_label_down, color=#2a2e39, textcolor=#ff7043, size=size.small, yloc=yloc.abovebar)',
             f"    alert({short_msg!r}, alert.freq_once_per_bar_close)",
             "",
             "// — short exit (cover)",
-            "if shortExitTrigger",
+            "if shortExitTrigger and inShort",
             "    inShort := false",
             "    shortEntry := na",
             "    shortBar := na",
             "    shortStop := na",
             "    shortTarget := na",
             '    posReason := "—"',
-            f'    label.new(bar_index, low, "▲ COVER\\n" + shortExitReason, style=label.style_label_up, color=color.new(#42a5f5, 100), textcolor=color.white, size=size.small, yloc=yloc.belowbar)',
+            f'    label.new(bar_index, low, "▲ COVER\\n" + shortExitReason, style=label.style_label_up, color=#2a2e39, textcolor=#42a5f5, size=size.small, yloc=yloc.belowbar)',
             f"    alert({cover_msg!r}, alert.freq_once_per_bar_close)",
             "",
         ]
@@ -1053,20 +1055,15 @@ def generate_indicator(strategy: dict) -> str:
     if do_short:
         L.append("plotshape(shortTrigger, 'SHORT', style=shape.triangledown, location=location.abovebar, color=color.new(#ff7043, 0), size=size.tiny)")
         L.append("plotshape(shortExitTrigger, 'COVER', style=shape.triangleup, location=location.belowbar, color=color.new(#42a5f5, 0), size=size.tiny)")
-    if do_long and do_short:
-        L.append("bgcolor(inLong ? color.new(#26a69a, 92) : inShort ? color.new(#ef5350, 92) : na)")
-    elif do_long:
-        L.append("bgcolor(inLong ? color.new(#26a69a, 92) : na)")
-    else:
-        L.append("bgcolor(inShort ? color.new(#ef5350, 92) : na)")
+    # (no background tint — keeps the chart clean)
     if do_long and has_stop:
-        L.append("plot(inLong ? longStop : na, 'Long stop', style=plot.style_linebr, color=color.new(#ef5350, 20), linewidth=2)")
+        L.append("plot(inLong ? longStop : na, 'Long stop', style=plot.style_linebr, color=color.new(#ef5350, 35), linewidth=1)")
     if do_long and has_target:
-        L.append("plot(inLong ? longTarget : na, 'Long target', style=plot.style_linebr, color=color.new(#26a69a, 20), linewidth=2)")
+        L.append("plot(inLong ? longTarget : na, 'Long target', style=plot.style_linebr, color=color.new(#26a69a, 35), linewidth=1)")
     if do_short and has_stop:
-        L.append("plot(inShort ? shortStop : na, 'Short stop', style=plot.style_linebr, color=color.new(#ff7043, 20), linewidth=2)")
+        L.append("plot(inShort ? shortStop : na, 'Short stop', style=plot.style_linebr, color=color.new(#ff7043, 35), linewidth=1)")
     if do_short and has_target:
-        L.append("plot(inShort ? shortTarget : na, 'Short target', style=plot.style_linebr, color=color.new(#42a5f5, 20), linewidth=2)")
+        L.append("plot(inShort ? shortTarget : na, 'Short target', style=plot.style_linebr, color=color.new(#42a5f5, 35), linewidth=1)")
     L.append("")
     if ctx.plots:
         L.append("// ┌─ 8 · INDICATOR LINES ──────────────────────────────────────────────")
@@ -1075,19 +1072,19 @@ def generate_indicator(strategy: dict) -> str:
     # live position-panel cell expressions (python-built, per side config)
     if do_long and do_short:
         pos_expr = 'inLong ? "LONG ▲" : inShort ? "SHORT ▼" : "FLAT —"'
-        pos_color = "inLong ? color.new(#26a69a, 0) : inShort ? color.new(#ef5350, 0) : color.new(#787b86, 0)"
+        pos_color = "color.new(#d1d4dc, 0)"
         entry_expr = 'inLong ? str.tostring(longEntry) : inShort ? str.tostring(shortEntry) : "—"'
         stop_expr = 'inLong ? str.tostring(longStop) : inShort ? str.tostring(shortStop) : "—"'
         target_expr = 'inLong ? str.tostring(longTarget) : inShort ? str.tostring(shortTarget) : "—"'
     elif do_long:
         pos_expr = 'inLong ? "LONG ▲" : "FLAT —"'
-        pos_color = "inLong ? color.new(#26a69a, 0) : color.new(#787b86, 0)"
+        pos_color = "color.new(#d1d4dc, 0)"
         entry_expr = 'inLong ? str.tostring(longEntry) : "—"'
         stop_expr = 'inLong ? str.tostring(longStop) : "—"'
         target_expr = 'inLong ? str.tostring(longTarget) : "—"'
     else:
         pos_expr = 'inShort ? "SHORT ▼" : "FLAT —"'
-        pos_color = "inShort ? color.new(#ef5350, 0) : color.new(#787b86, 0)"
+        pos_color = "color.new(#d1d4dc, 0)"
         entry_expr = 'inShort ? str.tostring(shortEntry) : "—"'
         stop_expr = 'inShort ? str.tostring(shortStop) : "—"'
         target_expr = 'inShort ? str.tostring(shortTarget) : "—"'
@@ -1103,9 +1100,9 @@ def generate_indicator(strategy: dict) -> str:
     L.append('    table.cell(posTable, 0, 2, "Entry", text_color=color.new(#787b86, 0), text_size=size.small)')
     L.append(f"    table.cell(posTable, 1, 2, {entry_expr}, text_size=size.small)")
     L.append('    table.cell(posTable, 0, 3, "Stop", text_color=color.new(#787b86, 0), text_size=size.small)')
-    L.append(f"    table.cell(posTable, 1, 3, {stop_expr}, text_color=color.new(#ef5350, 0), text_size=size.small)")
+    L.append(f"    table.cell(posTable, 1, 3, {stop_expr}, text_color=color.new(#d1d4dc, 0), text_size=size.small)")
     L.append('    table.cell(posTable, 0, 4, "Target", text_color=color.new(#787b86, 0), text_size=size.small)')
-    L.append(f"    table.cell(posTable, 1, 4, {target_expr}, text_color=color.new(#26a69a, 0), text_size=size.small)")
+    L.append(f"    table.cell(posTable, 1, 4, {target_expr}, text_color=color.new(#d1d4dc, 0), text_size=size.small)")
     L.append('    table.cell(posTable, 0, 5, "Reason", text_color=color.new(#787b86, 0), text_size=size.small)')
     L.append("    table.cell(posTable, 1, 5, posReason, text_size=size.small)")
     L.append("")
