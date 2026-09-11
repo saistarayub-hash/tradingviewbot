@@ -1,0 +1,11 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Runtime state (chat history, signals, settings incl. API keys)
+data/
+
+# OS
+.DS_Store

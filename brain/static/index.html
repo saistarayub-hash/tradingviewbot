@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🧠 Trading Brain</title>
+<style>
+  :root {
+    --bg: #131722; --panel: #1e222d; --panel2: #2a2e39; --border: #363a45;
+    --text: #d1d4dc; --muted: #787b86; --accent: #2962ff; --green: #26a69a;
+    --red: #ef5350; --gold: #ff9800; --mono: 'SF Mono', 'Fira Code', Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  header .logo { font-size: 18px; font-weight: 700; }
+  header .logo span { color: var(--accent); }
+  .badge {
+    font-size: 11px; padding: 3px 9px; border-radius: 10px;
+    border: 1px solid var(--border); color: var(--muted); background: var(--panel2);
+  }
+  .badge.ok { color: var(--green); border-color: var(--green); }
+  .spacer { flex: 1; }
+  button {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 7px 13px; cursor: pointer; font-size: 13px;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.small { padding: 4px 9px; font-size: 12px; }
+  main {
+    flex: 1; display: grid; min-height: 0;
+    grid-template-columns: minmax(360px, 44%) 1fr;
+  }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; grid-template-rows: 1fr auto; } }
+  .col { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+  .chat { border-right: 1px solid var(--border); }
+  .chat-box { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { max-width: 85%; padding: 9px 13px; border-radius: 12px; white-space: pre-wrap; word-break: break-word; }
+  .msg.user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+  .msg.assistant { align-self: flex-start; background: var(--panel); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+  .msg a { color: #82aaff; }
+  .chat-input { display: flex; gap: 8px; padding: 12px 12px 8px; border-top: 1px solid var(--border); background: var(--panel); }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 12px 10px; background: var(--panel); border-top: 1px solid transparent; }
+  .chip {
+    font-size: 12px; background: var(--panel2); border: 1px solid var(--border);
+    border-radius: 14px; padding: 4px 11px; cursor: pointer; color: var(--muted);
+  }
+  .chip:hover { border-color: var(--accent); color: var(--text); }
+  .chat-input input {
+    flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 10px 12px; font-size: 14px;
+  }
+  .right { overflow-y: auto; padding: 16px; gap: 16px; display: flex; flex-direction: column; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px;
+  }
+  .card h3 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+  .card h3 .spacer { flex: 1; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 10px; }
+  .tab { padding: 6px 12px; border-radius: 6px; cursor: pointer; color: var(--muted); font-size: 13px; }
+  .tab.active { background: var(--panel2); color: var(--text); }
+  pre.code {
+    margin: 0; padding: 12px; background: #0d0f14; border: 1px solid var(--border);
+    border-radius: 8px; font-family: var(--mono); font-size: 12px; line-height: 1.45;
+    max-height: 46vh; overflow: auto; white-space: pre;
+  }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13px; }
+  .kv .k { color: var(--muted); }
+  .meter { height: 6px; background: var(--panel2); border-radius: 3px; overflow: hidden; margin: 6px 0; }
+  .meter > div { height: 100%; background: var(--green); }
+  .suggest {
+    border: 1px solid var(--gold); background: rgba(255,152,0,.07);
+    border-radius: 8px; padding: 10px 12px; font-size: 13px;
+  }
+  .suggest .why { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+  .footnote { color: var(--muted); font-size: 12px; }
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,.55);
+    display: flex; align-items: center; justify-content: center; z-index: 50;
+  }
+  .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; width: min(460px, 92vw); }
+  .modal label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+  .modal input, .modal select { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+  .modal .row { justify-content: flex-end; margin-top: 16px; }
+  .hidden { display: none !important; }
+  code.inline { background: var(--panel2); padding: 1px 5px; border-radius: 4px; font-family: var(--mono); font-size: 12px; }
+  .dash { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 1200px) { .dash { grid-template-columns: 1fr; } }
+  .subtitle { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 4px 7px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; }
+  .tag { padding: 1px 7px; border-radius: 8px; font-size: 11px; font-weight: 600; }
+  .tag.buy { background: rgba(38,166,154,.15); color: var(--green); }
+  .tag.sell { background: rgba(239,83,80,.15); color: var(--red); }
+  .tag.sellshort { background: rgba(255,112,67,.18); color: #ff7043; }
+  .tag.buytocover { background: rgba(66,165,245,.18); color: #42a5f5; }
+  .win { color: var(--green); font-weight: 600; }
+  .lose { color: var(--red); font-weight: 600; }
+  .num { font-family: var(--mono); }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">🧠 Trading<span>Brain</span></div>
+  <span class="badge" id="provider-badge">offline</span>
+  <span class="badge" id="strategy-badge">strategy: —</span>
+  <div class="spacer"></div>
+  <button id="btn-settings" class="small">⚙️ Settings</button>
+</header>
+
+<main>
+  <!-- ── Chat column ─────────────────────────────────────────────── -->
+  <div class="col chat">
+    <div class="chat-box" id="chat"></div>
+    <div class="chat-input">
+      <input id="msg" placeholder="Describe your strategy… e.g. 'buy when EMA 9 crosses above EMA 21, RSI below 50, stop 2 ATR, target 2R'" autocomplete="off">
+      <button id="send" class="primary">Send</button>
+      <button id="demo" title="Feed the brain a built-in demo video (works offline)">🎥 Demo</button>
+    </div>
+    <div class="chips">
+      <button class="chip" onclick="send(document.getElementById('chip-ema').textContent)">📘 EMA cross + RSI (both sides)</button>
+      <button class="chip" onclick="send(document.getElementById('chip-ichimoku').textContent)">⛩️ Ichimoku + EMA stack</button>
+      <button class="chip" onclick="send(document.getElementById('chip-scalp').textContent)">⚡ Breakout scalp</button>
+      <button class="chip" onclick="send(document.getElementById('chip-ht').textContent)">📉 HalfTrend flip</button>
+      <span class="hidden" id="chip-ema">Strategy: buy when the 9 EMA crosses above the 21 EMA and RSI is below 50, exit when the 9 EMA crosses back below. Stop 2 ATR, target 2 to 1 risk reward, 15 minute chart. Also short when the 9 EMA crosses below the 21 EMA with RSI above 50, cover when it crosses back above.</span>
+      <span class="hidden" id="chip-ichimoku">Strategy: long when price closes above the Ichimoku cloud and the 10 EMA is above the 20 EMA above the 50 EMA, exit when it closes below the cloud. Stop 2 ATR, target 2R. 1 hour chart.</span>
+      <span class="hidden" id="chip-scalp">Strategy: long when price breaks above the 20 bar high, exit when price breaks below the 20 bar low. Short when price breaks below the 20 bar low, cover on a 20 bar high breakout. Stop 1.5 ATR, target 2 to 1 risk reward. 5 minute chart.</span>
+      <span class="hidden" id="chip-ht">Strategy: long when the HalfTrend flips bullish, short when the HalfTrend flips bearish. Amplitude 20, channel deviation 2. 15 minute chart.</span>
+    </div>
+  </div>
+
+  <!-- ── Right column ────────────────────────────────────────────── -->
+  <div class="col right">
+    <div class="card" id="card-indicator">
+      <h3>📄 Your indicator <span class="spacer"></span>
+        <button class="small" id="btn-copy">Copy</button>
+        <button class="small" id="btn-download">⬇ .pine</button>
+      </h3>
+      <div class="tabs">
+        <div class="tab active" data-tab="indicator">Indicator</div>
+        <div class="tab" data-tab="strategy">Backtest</div>
+        <div class="tab" data-tab="json">Strategy JSON</div>
+      </div>
+      <pre class="code" id="code">Loading…</pre>
+      <p class="footnote">
+        Paste <code class="inline">pine/indicator.pine</code> into TradingView →
+        Pine Editor → Add to chart. Then create webhook alerts on the
+        <b>Brain BUY / SELL</b> (and <b>SHORT / COVER</b>) alert conditions,
+        webhook URL:
+        <code class="inline" id="hook-url">…</code>
+      </p>
+    </div>
+
+    <div class="card" id="card-learn">
+      <h3>🧠 Learning loop <span class="spacer"></span>
+        <button class="small" id="btn-simulate">Simulate 2 pairs</button>
+      </h3>
+      <div class="kv" id="stats"></div>
+      <div class="meter hidden" id="meter"><div></div></div>
+      <div class="suggest hidden" id="suggest"></div>
+      <p class="footnote">
+        Every alert your TradingView indicator fires lands at
+        <code class="inline">/webhook/tv</code>. Long pairs (BUY→SELL) and short
+        pairs (SHORT→COVER) are matched per symbol/timeframe. After 5 completed
+        trades the brain starts proposing improvements.
+      </p>
+    </div>
+
+    <div class="card">
+      <h3>📡 Signal dashboard</h3>
+      <div class="dash">
+        <div>
+          <div class="subtitle">Recent signals</div>
+          <table id="sig-table">
+            <tr><th>time</th><th>action</th><th>symbol</th><th>price</th></tr>
+          </table>
+        </div>
+        <div>
+          <div class="subtitle">Completed trades</div>
+          <table id="trade-table">
+            <tr><th>side</th><th>entry</th><th>exit</th><th>result</th></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>🎥 Videos the brain has watched</h3>
+      <div class="kv" id="videos"><span class="footnote">Nothing yet — paste a link in chat.</span></div>
+    </div>
+  </div>
+</main>
+
+<!-- ── Settings modal ───────────────────────────────────────────── -->
+<div class="modal-backdrop hidden" id="modal">
+  <div class="modal">
+    <h3>⚙️ Brain settings</h3>
+    <label>AI provider</label>
+    <select id="set-provider">
+      <option value="mock">Offline rule engine (no key needed)</option>
+      <option value="gemini">Google Gemini (recommended — watches YouTube natively)</option>
+      <option value="openai">OpenAI (GPT)</option>
+    </select>
+    <label>API key (stored only in local <code class="inline">data/settings.json</code>)</label>
+    <input id="set-key" type="password" placeholder="sk-… / AIza…">
+    <label>Model override (optional)</label>
+    <input id="set-model" placeholder="e.g. gemini-2.0-flash / gpt-4o-mini">
+    <label><input type="checkbox" id="set-native" checked> Gemini: watch YouTube video directly</label>
+    <div class="row">
+      <button id="btn-cancel">Cancel</button>
+      <button id="btn-save" class="primary">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+let currentTab = 'indicator';
+
+function fmtMarkdown(text) {
+  return (text || '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/`([^`]+)`/g, '<code class="inline">$1</code>')
+    .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank">$1</a>');
+}
+
+function addMessage(role, text) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.innerHTML = fmtMarkdown(text);
+  $('chat').appendChild(div);
+  $('chat').scrollTop = $('chat').scrollHeight;
+}
+
+async function send(text) {
+  if (!text || !text.trim()) return;
+  addMessage('user', text);
+  $('msg').value = '';
+  const res = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+  const data = await res.json().catch(() => null);
+  addMessage('assistant', data ? data.reply : '⚠️ The brain hit an error — check the server logs.');
+  refresh();
+}
+
+async function refresh() {
+  const res = await fetch('/api/state');
+  const st = await res.json();
+  const s = st.strategy || {};
+  $('strategy-badge').textContent = 'strategy: ' + (s.name || '—') + ' v' + (s.revision || 1);
+  $('provider-badge').textContent = st.provider || 'offline';
+  $('provider-badge').className = 'badge ' + ((st.provider || '').includes('mock') ? '' : 'ok');
+  $('hook-url').textContent = location.origin + '/webhook/tv';
+
+  // stats
+  const stats = st.stats || {};
+  const rows = [
+    ['Signals received', stats.signals ?? 0],
+    ['Long entries (BUY)', stats.buys ?? 0],
+    ['Long exits (SELL)', stats.sells ?? 0],
+    ['Short entries (SHORT)', stats.shorts ?? 0],
+    ['Short exits (COVER)', stats.covers ?? 0],
+    ['Completed trades', stats.completed ?? 0],
+    ['Win rate', stats.winRate == null ? '—' : Math.round(stats.winRate * 100) + '%'],
+    ['Avg trade', stats.avgRR == null ? '—' : (stats.avgRR >= 0 ? '+' : '') + Math.round(stats.avgRR * 10000) / 100 + '%'],
+  ];
+  $('stats').innerHTML = rows.map(([k, v]) => `<span class="k">${k}</span><span>${v}</span>`).join('');
+
+  // signal dashboard
+  const TAG = { BUY: 'buy', SELL: 'sell', SELLSHORT: 'sellshort', BUYTOCOVER: 'buytocover' };
+  const sigs = (st.recent_signals || []).slice(-15).reverse();
+  $('sig-table').innerHTML =
+    '<tr><th>time</th><th>action</th><th>symbol</th><th>price</th></tr>' +
+    sigs.map(s =>
+      `<tr><td class="footnote">${(s.time || '').slice(11, 19) || '—'}</td>` +
+      `<td><span class="tag ${TAG[s.action] || ''}">${s.action || '—'}</span></td>` +
+      `<td>${s.symbol || '—'}</td>` +
+      `<td class="num">${s.price ?? '—'}</td></tr>`
+    ).join('') +
+    (sigs.length === 0 ? '<tr><td colspan="4" class="footnote">No signals yet — connect TradingView or hit Simulate.</td></tr>' : '');
+
+  const trades = (st.stats?.trades || []).slice(-10).reverse();
+  $('trade-table').innerHTML =
+    '<tr><th>side</th><th>entry</th><th>exit</th><th>result</th></tr>' +
+    trades.map(t =>
+      `<tr><td>${t.side === 'long' ? 'LONG' : 'SHORT'}</td>` +
+      `<td class="num">${t.entry}</td>` +
+      `<td class="num">${t.exit}</td>` +
+      `<td class="${t.win ? 'win' : 'lose'}">${t.win ? 'WIN' : 'LOSS'}</td></tr>`
+    ).join('') +
+    (trades.length === 0 ? '<tr><td colspan="4" class="footnote">No completed trades yet.</td></tr>' : '');
+
+  const sugg = st.suggestions && st.suggestions[0];
+  if (sugg) {
+    $('suggest').classList.remove('hidden');
+    $('suggest').innerHTML =
+      `💡 <b>${sugg.explain}</b><div class="why">${sugg.reason}</div>` +
+      `<div class="row"><button class="small primary" onclick="applySuggestion()">Apply suggestion</button></div>`;
+  } else {
+    $('suggest').classList.add('hidden');
+  }
+
+  const vids = st.videos || [];
+  $('videos').innerHTML = vids.length
+    ? vids.map(v => `<span class="k">🎥</span><span>${v.title || v.id} <span class="footnote">(${v.transcript_source || ''})</span></span>`).join('')
+    : '<span class="footnote">Nothing yet — paste a link in chat.</span>';
+
+  loadCode();
+}
+
+async function loadCode() {
+  const res = await fetch('/api/pine/' + currentTab);
+  const data = await res.json();
+  $('code').textContent = data.code;
+}
+
+async function applySuggestion() {
+  const res = await fetch('/api/apply-suggestion', { method: 'POST' });
+  if (res.ok) {
+    addMessage('assistant', '✅ Suggestion applied — `pine/indicator.pine` and `pine/strategy.pine` were regenerated. Re-copy the indicator into TradingView.');
+    refresh();
+  } else {
+    addMessage('assistant', '⚠️ No suggestion available right now.');
+  }
+}
+
+// ── wire up ─────────────────────────────────────────────────────
+$('send').onclick = () => send($('msg').value);
+$('msg').addEventListener('keydown', (e) => { if (e.key === 'Enter') send($('msg').value); });
+$('demo').onclick = async () => {
+  addMessage('user', '🎥 feed me the demo video');
+  const res = await fetch('/api/demo-video', { method: 'POST' });
+  const data = await res.json();
+  addMessage('assistant', '📺 Watched the demo video — here\'s the strategy I extracted:\n\n' + data.reply + '\n\n✅ Indicator regenerated in `pine/`.');
+  refresh();
+};
+$('btn-simulate').onclick = async () => {
+  await fetch('/api/webhook/simulate', { method: 'POST' });
+  refresh();
+};
+$('btn-copy').onclick = async () => {
+  await navigator.clipboard.writeText($('code').textContent);
+  $('btn-copy').textContent = 'Copied ✓';
+  setTimeout(() => ($('btn-copy').textContent = 'Copy'), 1200);
+};
+$('btn-download').onclick = () => {
+  const blob = new Blob([$('code').textContent], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = currentTab + '.pine';
+  a.click();
+};
+document.querySelectorAll('.tab').forEach((t) => {
+  t.onclick = () => {
+    document.querySelectorAll('.tab').forEach((x) => x.classList.remove('active'));
+    t.classList.add('active');
+    currentTab = t.dataset.tab;
+    loadCode();
+  };
+});
+
+$('btn-settings').onclick = () => $('modal').classList.remove('hidden');
+$('btn-cancel').onclick = () => $('modal').classList.add('hidden');
+$('btn-save').onclick = async () => {
+  await fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      provider: $('set-provider').value,
+      api_key: $('set-key').value || undefined,
+      model: $('set-model').value || undefined,
+      native_video: $('set-native').checked,
+    }),
+  });
+  $('modal').classList.add('hidden');
+  refresh();
+};
+
+addMessage('assistant', "👋 I'm your TradingView brain — **type your strategy** and I'll build the indicator for you.\n\nDescribe your entries, exits, filters, stop and target in plain English, then paste the generated `pine/indicator.pine` into TradingView. Every BUY/SELL/SHORT/COVER signal on the chart shows a label with the **reasons** it fired.\n\nTry a quick example below the input box, or paste a **YouTube link** and I'll learn from the video instead.");
+refresh();
+</script>
+</body>
+</html>

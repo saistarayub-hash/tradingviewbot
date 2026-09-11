@@ -1,0 +1,14 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+httpx>=0.27
+python-multipart>=0.0.9
+
+# ── Optional extras ────────────────────────────────────────────────
+# Better YouTube download handling (captions from region-locked videos,
+# audio downloads for transcription):
+#   pip install yt-dlp
+# yt-dlp>=2024.4.9
+#
+# Speech-to-text for videos that have NO captions at all:
+#   pip install faster-whisper
+# faster-whisper>=1.0.0
