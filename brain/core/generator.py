@@ -933,6 +933,7 @@ def generate_indicator(strategy: dict) -> str:
             "var float longStop   = na",
             "var float longTarget = na",
             "var int   longBar    = na",
+            "var long_position brainLongPos = na   // TradingView long-position tool",
         ]
     if do_short:
         L += [
@@ -941,6 +942,7 @@ def generate_indicator(strategy: dict) -> str:
             "var float shortStop   = na",
             "var float shortTarget = na",
             "var int   shortBar    = na",
+            "var short_position brainShortPos = na  // TradingView short-position tool",
         ]
     L.append('var string posReason = "—"   // why the current position is open')
     L.append("")
@@ -955,8 +957,8 @@ def generate_indicator(strategy: dict) -> str:
             "longExitReason = longExitCond ? longExitMsg : longStopHit ? \"Stop hit\" "
             ": longTargetHit ? \"Target hit\" : \"Max bars in trade\""
         )
-        L.append("longTrigger     = longCond and not inLong")
-        L.append("longExitTrigger = inLong and (longExitCond or longStopHit or longTargetHit or longMaxBars)")
+        L.append("longTrigger     = longCond and not inLong and barstate.isconfirmed")
+        L.append("longExitTrigger = inLong and (longExitCond or longStopHit or longTargetHit or longMaxBars) and barstate.isconfirmed")
         L.append("")
     if do_short:
         L.append("// ┌─ 5 · SHORT BLOCK ───── conditions · reasons · engine ─────────────")
@@ -969,14 +971,18 @@ def generate_indicator(strategy: dict) -> str:
             "shortExitReason = shortExitCond ? shortExitMsg : shortStopHit ? \"Stop hit\" "
             ": shortTargetHit ? \"Target hit\" : \"Max bars in trade\""
         )
-        L.append("shortTrigger     = shortCond and not inShort")
-        L.append("shortExitTrigger = inShort and (shortExitCond or shortStopHit or shortTargetHit or shortMaxBars)")
+        L.append("shortTrigger     = shortCond and not inShort and barstate.isconfirmed")
+        L.append("shortExitTrigger = inShort and (shortExitCond or shortStopHit or shortTargetHit or shortMaxBars) and barstate.isconfirmed")
         L.append("")
     L.append("// ┌─ 6 · POSITION ENGINE ── entries · exits · reason labels · alerts ──")
+    L.append("// (the position tools take the stop/target assigned in the entry block)")
     if do_long and do_short:
         L += [
             "// flip: long signal while short → cover first, then enter long",
             "if longTrigger and inShort",
+            "    if not na(brainShortPos)",
+            "        short_position.close(brainShortPos, bar_index, close)",
+            "    brainShortPos := na",
             "    inShort := false",
             "    shortEntry := na",
             "    shortBar := na",
@@ -988,6 +994,9 @@ def generate_indicator(strategy: dict) -> str:
             "",
             "// flip: short signal while long → sell first, then enter short",
             "if shortTrigger and inLong",
+            "    if not na(brainLongPos)",
+            "        long_position.close(brainLongPos, bar_index, close)",
+            "    brainLongPos := na",
             "    inLong := false",
             "    longEntry := na",
             "    longBar := na",
@@ -1007,12 +1016,16 @@ def generate_indicator(strategy: dict) -> str:
             "    longBar := bar_index",
             *[f"    {a}" for a in long_stop_assigns],
             f"    {long_target_assign}",
+            "    brainLongPos := long_position.new(bar_index, close, na(longStop) ? close - ta.atr(14) * 2.0 : longStop, na(longTarget) ? (na(longStop) ? close + ta.atr(14) * 4.0 : close + (close - longStop) * 2.0) : longTarget)",
             "    posReason := longReason",
             f'    label.new(bar_index, low, "▲ BUY\\n" + longReason, style=label.style_label_up, color=#2a2e39, textcolor=#26a69a, size=size.small, yloc=yloc.belowbar)',
             f"    alert({buy_msg!r}, alert.freq_once_per_bar_close)",
             "",
             "// — long exit",
             "if longExitTrigger and inLong",
+            "    if not na(brainLongPos)",
+            "        long_position.close(brainLongPos, bar_index, close)",
+            "    brainLongPos := na",
             "    inLong := false",
             "    longEntry := na",
             "    longBar := na",
@@ -1032,12 +1045,16 @@ def generate_indicator(strategy: dict) -> str:
             "    shortBar := bar_index",
             *[f"    {a}" for a in short_stop_assigns],
             f"    {short_target_assign}",
+            "    brainShortPos := short_position.new(bar_index, close, na(shortStop) ? close + ta.atr(14) * 2.0 : shortStop, na(shortTarget) ? (na(shortStop) ? close - ta.atr(14) * 4.0 : close - (shortStop - close) * 2.0) : shortTarget)",
             "    posReason := shortReason",
             f'    label.new(bar_index, high, "▼ SHORT\\n" + shortReason, style=label.style_label_down, color=#2a2e39, textcolor=#ff7043, size=size.small, yloc=yloc.abovebar)',
             f"    alert({short_msg!r}, alert.freq_once_per_bar_close)",
             "",
             "// — short exit (cover)",
             "if shortExitTrigger and inShort",
+            "    if not na(brainShortPos)",
+            "        short_position.close(brainShortPos, bar_index, close)",
+            "    brainShortPos := na",
             "    inShort := false",
             "    shortEntry := na",
             "    shortBar := na",
@@ -1048,22 +1065,8 @@ def generate_indicator(strategy: dict) -> str:
             f"    alert({cover_msg!r}, alert.freq_once_per_bar_close)",
             "",
         ]
-    L.append("// ┌─ 7 · VISUALS ────────── arrows · background · stop/target levels ───")
-    if do_long:
-        L.append("plotshape(longTrigger, 'BUY', style=shape.triangleup, location=location.belowbar, color=color.new(#26a69a, 0), size=size.tiny)")
-        L.append("plotshape(longExitTrigger, 'SELL', style=shape.triangledown, location=location.abovebar, color=color.new(#ef5350, 0), size=size.tiny)")
-    if do_short:
-        L.append("plotshape(shortTrigger, 'SHORT', style=shape.triangledown, location=location.abovebar, color=color.new(#ff7043, 0), size=size.tiny)")
-        L.append("plotshape(shortExitTrigger, 'COVER', style=shape.triangleup, location=location.belowbar, color=color.new(#42a5f5, 0), size=size.tiny)")
-    # (no background tint — keeps the chart clean)
-    if do_long and has_stop:
-        L.append("plot(inLong ? longStop : na, 'Long stop', style=plot.style_linebr, color=color.new(#ef5350, 35), linewidth=1)")
-    if do_long and has_target:
-        L.append("plot(inLong ? longTarget : na, 'Long target', style=plot.style_linebr, color=color.new(#26a69a, 35), linewidth=1)")
-    if do_short and has_stop:
-        L.append("plot(inShort ? shortStop : na, 'Short stop', style=plot.style_linebr, color=color.new(#ff7043, 35), linewidth=1)")
-    if do_short and has_target:
-        L.append("plot(inShort ? shortTarget : na, 'Short target', style=plot.style_linebr, color=color.new(#42a5f5, 35), linewidth=1)")
+    L.append("// ┌─ 7 · VISUALS ────────── position tools draw entry · stop · target ──")
+    L.append("// (each trade is marked automatically by the long/short position tool)")
     L.append("")
     if ctx.plots:
         L.append("// ┌─ 8 · INDICATOR LINES ──────────────────────────────────────────────")
