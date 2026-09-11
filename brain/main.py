@@ -202,6 +202,7 @@ async def state():
         "provider": get_llm(stores.settings.read()).label,
         "videos": stores.videos.read()[-10:],
         "messages": stores.messages.read()[-60:],
+        "recent_signals": stores.signals.read()[-40:],
     }
 
 
@@ -269,30 +270,22 @@ async def demo_video():
 
 @app.post("/api/webhook/simulate")
 async def simulate():
-    """Simulate a completed BUY→SELL pair (for testing the learning loop offline)."""
+    """Simulate a completed long pair + short pair (for testing the learning
+    loop and the signal dashboard offline)."""
     strategy = _strategy()
-    buys = [s for s in stores.signals.read() if s.get("action") == "BUY"]
-    sells = [s for s in stores.signals.read() if s.get("action") == "SELL"]
-    price = 100.0
-    buys_n, sells_n = len(buys), len(sells)
-    recorded = []
-    if buys_n <= sells_n:
-        learn.record(stores, {
-            "strategy": strategy["name"], "revision": strategy.get("revision", 1),
-            "action": "BUY", "symbol": "DEMO", "interval": "15",
-            "price": price, "time": now_iso(),
-        })
-        buys_n += 1
-        recorded.append("BUY")
-    if sells_n < buys_n:
-        learn.record(stores, {
-            "strategy": strategy["name"], "revision": strategy.get("revision", 1),
-            "action": "SELL", "symbol": "DEMO", "interval": "15",
-            "price": 101.0, "time": now_iso(),
-        })
-        sells_n += 1
-        recorded.append("SELL")
-    return {"ok": True, "recorded": recorded, "stats": learn.review(stores, strategy)}
+    ts = now_iso()
+    base = {
+        "strategy": strategy["name"], "revision": strategy.get("revision", 1),
+        "symbol": "DEMO", "interval": "15", "time": ts,
+    }
+    # long pair (winner)
+    learn.record(stores, {**base, "action": "BUY", "side": "long", "price": 100.0})
+    learn.record(stores, {**base, "action": "SELL", "side": "long", "price": 101.0})
+    # short pair (winner)
+    learn.record(stores, {**base, "action": "SELLSHORT", "side": "short", "price": 100.0})
+    learn.record(stores, {**base, "action": "BUYTOCOVER", "side": "short", "price": 99.0})
+    return {"ok": True, "recorded": ["BUY", "SELL", "SELLSHORT", "BUYTOCOVER"],
+            "stats": learn.review(stores, strategy)}
 
 
 # ────────────────────────────────────────────────────────────────────────────

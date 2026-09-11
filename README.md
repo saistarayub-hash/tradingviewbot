@@ -2,9 +2,11 @@
 
 A **TradingView indicator** with a **brain**: paste a YouTube video link into the
 chat, the brain watches it (captions), extracts the trading strategy, and
-generates a Pine Script v6 indicator for TradingView. The indicator fires
-**alert webhooks back to the brain**, which logs every BUY/SELL, measures the
-results, and proposes improvements — that's the learning loop.
+generates a Pine Script v6 indicator for TradingView. The indicator trades
+**both sides** (BUY/SELL and SHORT/COVER), fires **alert webhooks back to the
+brain**, which logs every signal, measures the results, and proposes
+improvements — that's the learning loop. A live **signal dashboard** shows the
+feed and every completed trade.
 
 ```
 ┌──────────────────────────────┐         ┌──────────────────────────────┐
@@ -42,40 +44,55 @@ The brain fetches the caption track, extracts the rules, and regenerates:
 
 | File | What it is |
 |---|---|
-| `pine/indicator.pine` | The **indicator**: plots BUY/SELL arrows, tracks the stop & target levels, fires `alertcondition`s (BUY/SELL) you can attach webhooks to |
-| `pine/strategy.pine` | The **same rules** as a TradingView `strategy()` script → use the Strategy Tester to backtest |
-| `data/strategy.json` | The canonical strategy the brain "knows" (rules, stop, target, revision) |
+| `pine/indicator.pine` | The **indicator**: plots BUY/SELL/SHORT/COVER arrows, tracks stop & target levels per side, flips positions, fires 4 `alertcondition`s you can attach webhooks to |
+| `pine/strategy.pine` | The **same rules** as a TradingView `strategy()` script (long + short) → use the Strategy Tester to backtest |
+| `data/strategy.json` | The canonical strategy the brain "knows" (rules, side, stop, target, revision) |
+
+The chat app also includes a **Signal dashboard** (recent webhook feed +
+completed trades with win/loss) and a **learning panel** with live stats and
+the brain's current suggestion.
 
 ### Connect TradingView (the learning loop)
 
 1. TradingView → Pine Editor → paste `pine/indicator.pine` → **Add to chart**.
 2. Make your server reachable from the internet (e.g. `cloudflared tunnel --url http://localhost:8000`).
-3. Create two alerts on the chart, both *webhook* type, URL `https://YOUR-TUNNEL/webhook/tv`
+3. Create up to four alerts on the chart, all *webhook* type, URL `https://YOUR-TUNNEL/webhook/tv`
    (the exact URL is shown in the app):
-   - Condition **“Brain BUY — …”** → *Once per bar close*
-   - Condition **“Brain SELL — …”** → *Once per bar close*
-4. Let it trade. The brain pairs BUY→SELL per symbol/timeframe, computes win
-   rate, and after 5 completed trades starts proposing tweaks (e.g. widen the
-   ATR stop if it keeps getting stopped out). You approve — the brain never
-   silently changes live logic. Click **Simulate pair** to test the loop offline.
+   - **“Brain BUY — …”** and **“Brain SELL — …”** (long side), *Once per bar close*
+   - **“Brain SHORT — …”** and **“Brain COVER — …”** (short side, when your strategy is both-sides), *Once per bar close*
+4. Let it trade. The brain pairs **BUY→SELL** (long) and **SHORT→COVER**
+   (short) per symbol/timeframe, computes win rate per side, and after 5
+   completed trades starts proposing tweaks (e.g. widen the ATR stop if it
+   keeps getting stopped out). You approve — the brain never silently changes
+   live logic. Click **Simulate 2 pairs** to test the loop offline and watch
+   the **Signal dashboard** fill up.
 
 ## Teaching the brain (rules it understands)
 
 The brain maps what it hears onto a fixed, safe set of rules that it knows how
 to compile into Pine — it never free-styles code, so the generated indicator
-always compiles. Rule ids:
+always compiles. Strategies can be **long-only, short-only, or both sides**
+(`side`); short rules live in `short_entry` / `short_exit` / `short_filters`
+and mirror the long-side vocabulary. If a video teaches shorting, the brain
+mirrors the long rules into the short buckets automatically.
 
-- **Entry:** `ema_cross_up`, `sma_cross_up`, `macd_cross_up`, `rsi_cross_up`,
-  `bb_lower_touch`, `support_bounce`, `breakout_high`, `supertrend_up`
-- **Exit:** `ema_cross_down`, `sma_cross_down`, `macd_cross_down`,
-  `rsi_cross_down`, `bb_upper_touch`, `supertrend_down`, `resistance_reject`
+Rule ids:
+
+- **Signals:** `ema_cross_up/down`, `sma_cross_up/down`, `macd_cross_up/down`,
+  `rsi_cross_up/down`, `bb_lower_touch`, `bb_upper_touch`, `supertrend_up/down`,
+  `breakout_high`, `breakdown_low`, `support_bounce`, `resistance_reject`,
+  `ichimoku_cloud_up/down`
 - **Filters:** `rsi_below`, `rsi_above`, `price_above_ema`, `price_below_ema`,
-  `vwap_above`, `vwap_below`, `adx_above`, `volume_spike`, `session`
-- **Stop:** ATR-multiple / percent / swing low · **Target:** R:R / percent / opposite
+  `vwap_above`, `vwap_below`, `adx_above`, `volume_spike`, `session`,
+  `ema_stack_bull/bear` (“20 EMA above the 50 above the 200”),
+  `ichimoku_above/below_cloud`
+- **Stop:** ATR-multiple / percent / swing low (swing high for shorts) ·
+  **Target:** R:R / percent / opposite
 
 The rule engine (offline) understands plain-English patterns like *“9 EMA
-crosses above the 21 EMA”*, *“RSI below 50”*, *“2 ATR stop”*, *“2 to 1 risk
-reward”*. With an LLM key it extracts far more.
+crosses above the 21 EMA”*, *“RSI below 50”*, *“Ichimoku cloud”*, *“2 ATR
+stop”*, *“2 to 1 risk reward”*, *“that's your short signal”*. With an LLM key
+it extracts far more.
 
 ## Optional: real AI provider
 

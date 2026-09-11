@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import re
 
+from .generator import MIRROR
+
 STOP_PATTERNS = {
     "percent": [
         r"stop(?:-?loss)?\s+(?:of|at)?\s*([0-9.]+)\s*%",
@@ -155,6 +157,29 @@ def extract_heuristic(text: str) -> dict:
         if cross_dn:
             exits.append({"id": "rsi_cross_down", "params": {"length": rsi_len, "level": int(cross_dn.group(1))}})
 
+    # ── Ichimoku ────────────────────────────────────────────────────────
+    if re.search(r"\bichimoku\b", t):
+        if re.search(r"above\s+the\s+cloud", t):
+            filters.append({"id": "ichimoku_above_cloud", "params": {}})
+        elif re.search(r"below\s+the\s+cloud", t):
+            filters.append({"id": "ichimoku_below_cloud", "params": {}})
+        else:
+            entry.append({"id": "ichimoku_cloud_up", "params": {}})
+            exits.append({"id": "ichimoku_cloud_down", "params": {}})
+            notes.append("Ichimoku mentioned — used price crossing the cloud up/down as entry/exit.")
+
+    # ── EMA stack ("20 above the 50 above the 200") ───────────────────
+    chain = re.search(
+        r"\b(\d+)\s*(?:period\s*)?ema\s+above\s+(?:the\s+)?(\d+)\s*(?:period\s*)?ema"
+        r"\s+above\s+(?:the\s+)?(\d+)\s*(?:period\s*)?ema\b", t
+    )
+    if chain or re.search(r"\bema\s*stack|stacked\s*emas|stacked\s+moving\s+averages\b", t):
+        if chain:
+            fast, mid, slow = int(chain.group(1)), int(chain.group(2)), int(chain.group(3))
+        else:
+            fast, mid, slow = 10, 20, 50
+        filters.append({"id": "ema_stack_bull", "params": {"fast": fast, "mid": mid, "slow": slow}})
+
     # ── MACD ───────────────────────────────────────────────────────────
     if re.search(r"\bmacd\b", t):
         if re.search(r"macd\s+cross\w*\s*(up|above)|bullish\s+macd|cross\w*\s+(?:up\s+|above\s+)?(?:on\s+)?\w*macd", t):
@@ -191,12 +216,22 @@ def extract_heuristic(text: str) -> dict:
     if re.search(r"\b(volume spike|high volume|volume (?:surge|explosion|increase))\b", t):
         filters.append({"id": "volume_spike", "params": {}})
 
-    # ── Breakout / support ─────────────────────────────────────────────
+    # ── Breakout / support / breakdown ─────────────────────────────────
+    short_extra: list[dict] = []
     if re.search(r"\b(breakout|breaks? (?:out )?(?:above|through))\b", t):
         lb = int(_first_num(r"(\d+)\s*(?:bar|day|hour|candle)", t, 20))
         entry.append({"id": "breakout_high", "params": {"lookback": lb}})
+    if re.search(r"\b(breakdown|breaks? (?:down|below))\b", t):
+        lb = int(_first_num(r"(\d+)\s*(?:bar|day|hour|candle)", t, 20))
+        short_extra.append({"id": "breakdown_low", "params": {"lookback": lb}})
     if re.search(r"\b(support bounce|bounces? off (?:the )?support|support level)\b", t):
         entry.append({"id": "support_bounce", "params": {}})
+
+    # ── Short-side detection ───────────────────────────────────────────
+    short_hint = bool(re.search(
+        r"\b(short signal|short entry|go\s+short|shorting|short\s+(?:when|if|on|at|the)"
+        r"|open(?:ing)?\s+a\s+short|short\s+position|short\s+trade)\b", t
+    )) or bool(short_extra)
 
     # ── Stop / target ──────────────────────────────────────────────────
     stop = None
@@ -240,6 +275,27 @@ def extract_heuristic(text: str) -> dict:
     if not exits:
         notes.append("No exit signal found — position closes on stop/target (or max bars).")
 
+    # ── Mirror the long side when the video teaches shorting ──────────
+    side = "both" if short_hint else "long"
+    short_entry: list[dict] = []
+    short_exit: list[dict] = []
+    short_filters: list[dict] = []
+    if short_hint:
+        short_entry = [
+            {"id": MIRROR.get(r["id"], r["id"]), "params": dict(r.get("params") or {})}
+            for r in entry
+        ]
+        short_exit = [
+            {"id": MIRROR.get(r["id"], r["id"]), "params": dict(r.get("params") or {})}
+            for r in exits
+        ]
+        short_filters = [
+            {"id": MIRROR.get(r["id"], r["id"]), "params": dict(r.get("params") or {})}
+            for r in filters
+        ]
+        notes.append("Short-side rules were mirrored from the long-side rules.")
+    short_entry += short_extra
+
     # ── Timeframe / market ─────────────────────────────────────────────
     tf = None
     tf_map = {
@@ -268,13 +324,16 @@ def extract_heuristic(text: str) -> dict:
         "name": "Learned Strategy",
         "timeframe": tf,
         "market": market,
-        "side": "long",
+        "side": side,
         "summary": "Extracted by the brain's rule engine from the video transcript.",
         "notes": notes[:6],
         "rules": {
             "entry": entry or [{"id": "ema_cross_up", "params": {"fast": 9, "slow": 21}}],
             "exit": exits,
+            "short_entry": short_entry,
+            "short_exit": short_exit,
             "filters": filters,
+            "short_filters": short_filters,
         },
         "stop": stop,
         "target": target,

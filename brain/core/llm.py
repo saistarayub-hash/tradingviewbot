@@ -21,7 +21,7 @@ _SCHEMA_EXAMPLE = json.dumps(
         "name": "short strategy name",
         "timeframe": "chart timeframe in minutes as string, e.g. '15'",
         "market": "crypto | forex | stocks | futures | any",
-        "side": "long",
+        "side": "long | short | both",
         "summary": "2-3 sentence plain-English description of the rules",
         "notes": ["anything ambiguous or not representable in the schema"],
         "stop": {"type": "atr|percent|swing", "params": {"length": 14, "mult": 2.0}},
@@ -29,7 +29,10 @@ _SCHEMA_EXAMPLE = json.dumps(
         "rules": {
             "entry": [{"id": "...", "params": {}}],
             "exit": [{"id": "...", "params": {}}],
+            "short_entry": [{"id": "...", "params": {}}],
+            "short_exit": [{"id": "...", "params": {}}],
             "filters": [{"id": "...", "params": {}}],
+            "short_filters": [{"id": "...", "params": {}}],
         },
     },
     indent=2,
@@ -49,8 +52,11 @@ SYSTEM_PROMPT = (
     "  rsi_cross_up/down                           : {\"length\": 14, \"level\": n}   (crossover/crossunder a level)\n"
     "  bb_lower_touch / bb_upper_touch             : {\"length\": 20, \"mult\": 2.0}\n"
     "  supertrend_up/down                          : {\"factor\": 3.0, \"atr\": 10}\n"
-    "  breakout_high                               : {\"lookback\": n}  (highest high)\n"
+    "  breakout_high / breakdown_low               : {\"lookback\": n}  (highest high / lowest low)\n"
     "  support_bounce / resistance_reject          : {\"left\": 10, \"right\": 10}   (pivot bars)\n"
+    "  ichimoku_cloud_up / ichimoku_cloud_down     : {\"conversion\": 9, \"base\": 26, \"lagging\": 52, \"disp\": 26}\n"
+    "  ichimoku_above_cloud / ichimoku_below_cloud : same params\n"
+    "  ema_stack_bull / ema_stack_bear             : {\"fast\": 10, \"mid\": 20, \"slow\": 50}\n"
     "  rsi_below / rsi_above                       : {\"length\": 14, \"level\": n}\n"
     "  price_above_ema / price_below_ema           : {\"length\": 200}\n"
     "  vwap_above / vwap_below                     : {}\n"
@@ -58,9 +64,13 @@ SYSTEM_PROMPT = (
     "  volume_spike                                : {\"length\": 20, \"mult\": 2.0}\n"
     "  session                                     : {\"tz\": \"America/New_York\", \"start\": 540, \"end\": 1020}  (minutes)\n"
     "\nGuidelines:\n"
-    "- entry/exit are signals that happen at a moment in time (crossovers, touches,\n"
-    "  breakouts). filters are ongoing conditions (RSI below X, price above EMA, session).\n"
-    "- side is always 'long' in this version; interpret sell rules as exits.\n"
+    "- entry/exit are long-side signals that happen at a moment in time (crossovers,\n"
+    "  touches, breakouts); short_entry/short_exit are the same but for short trades.\n"
+    "- filters are ongoing conditions (RSI below X, price above EMA, session) for the\n"
+    "  long side; short_filters for the short side.\n"
+    "- If the video teaches shorting, populate the short_* buckets and set side to\n"
+    "  'both' (or 'short' if only shorts). If a short strategy is described as the\n"
+    "  mirror of the long one, mirror the rule ids accordingly.\n"
     "- If the video mentions moving-average crossovers or RSI levels, prefer those ids.\n"
     "- Return ONLY the JSON object, no markdown fences, no commentary.\n"
 )

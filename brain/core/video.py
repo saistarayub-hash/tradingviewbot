@@ -37,10 +37,12 @@ exponential moving averages: the nine EMA and the twenty one EMA. When the nine
 EMA crosses above the twenty one EMA we have our long entry signal. Before we
 take that trade we also want the RSI to be below fifty, that keeps us out of
 overbought chop. For the exit, we simply wait for the nine EMA to cross back
-below the twenty one EMA. Risk management is super important here: I put my
-stop loss two ATR below entry, and I'm always looking for at least a two to one
-risk reward target. And remember, never risk more than one percent of your
-account on a single trade. That's the whole system, hope it helps."""
+below the twenty one EMA. And you can flip the whole system for shorts: when
+the nine EMA crosses below the twenty one, that's your short signal, and you
+cover when it crosses back above. Risk management is super important here: I
+put my stop loss two ATR below entry, and I'm always looking for at least a
+two to one risk reward target. And remember, never risk more than one percent
+of your account on a single trade. That's the whole system, hope it helps."""
 DEMO_NOTE = "YouTube unreachable — used built-in demo transcript"
 
 

@@ -2,13 +2,14 @@
 
 TradingView indicator → alert webhook → this module.
 
-Every BUY/SELL the generated indicator fires lands here. Pairs are matched
-by symbol+timeframe, and when a SELL arrives the brain measures the outcome
-and (once enough samples exist) proposes an adjustment:
+Every BUY / SELL / SELLSHORT / BUYTOCOVER the generated indicator fires
+lands here. Long pairs (BUY→SELL) and short pairs (SELLSHORT→BUYTOCOVER)
+are matched FIFO per symbol+timeframe+side, and when a close arrives the
+brain measures the outcome and (once enough samples exist) proposes an
+adjustment:
 
   * win rate low   → tighten risk (raise R:R target, or reduce ATR mult)
   * win rate high  → relax risk (let winners run with a bigger target)
-  * ratio too low  → suggest lowering it so more trades reach the target
 
 Suggestions are stored and surfaced in chat/status — the user approves
 changes (the brain never silently rewrites live trading logic).
@@ -16,6 +17,9 @@ changes (the brain never silently rewrites live trading logic).
 from __future__ import annotations
 
 MIN_SAMPLES = 5
+
+OPEN_ACTIONS = {"BUY": "long", "SELLSHORT": "short"}
+CLOSE_ACTIONS = {"SELL": "long", "BUYTOCOVER": "short"}
 
 
 def _num(v):
@@ -25,15 +29,8 @@ def _num(v):
         return None
 
 
-def _is_stop_hit(signal: dict) -> bool:
-    """Heuristic: exit below the recorded stop level → stopped out."""
-    stop = _num(signal.get("stopLevel"))
-    price = _num(signal.get("price"))
-    return stop is not None and price is not None and price < stop
-
-
 def record(stores, payload: dict) -> dict:
-    """Store one webhook payload and update learning stats."""
+    """Store one webhook payload."""
     signals = stores.signals.read()
     data = dict(payload)
     data["ts"] = payload.get("time") or None
@@ -44,39 +41,49 @@ def record(stores, payload: dict) -> dict:
 def review(stores, strategy: dict | None) -> dict:
     """Compute stats + a suggestion from the signal history."""
     signals = stores.signals.read()
-    buys = [s for s in signals if s.get("action") == "BUY"]
-    sells = [s for s in signals if s.get("action") == "SELL"]
-    pairs = _pair_up(buys, sells)
+    pairs = _pair_up(signals)
 
     stats = {
         "signals": len(signals),
-        "buys": len(buys),
-        "sells": len(sells),
+        "buys": sum(1 for s in signals if s.get("action") == "BUY"),
+        "sells": sum(1 for s in signals if s.get("action") == "SELL"),
+        "shorts": sum(1 for s in signals if s.get("action") == "SELLSHORT"),
+        "covers": sum(1 for s in signals if s.get("action") == "BUYTOCOVER"),
         "completed": len(pairs),
         "wins": 0,
         "losses": 0,
         "winRate": None,
         "avgRR": None,
+        "trades": [],
         "ready": len(pairs) >= MIN_SAMPLES,
     }
 
     wins = 0.0
     total_pnl = 0.0
     trades = []
-    for b, s in pairs:
-        bp, sp = _num(b.get("price")), _num(s.get("price"))
+    for open_sig, close_sig, side in pairs:
+        bp, sp = _num(open_sig.get("price")), _num(close_sig.get("price"))
         if bp is None or sp is None:
             continue
-        won = sp >= bp
+        won = (sp >= bp) if side == "long" else (sp <= bp)
+        pnl = ((sp - bp) / bp) if side == "long" else ((bp - sp) / bp)
         wins += 1.0 if won else 0.0
-        total_pnl += (sp - bp) / bp
-        trades.append({"entry": bp, "exit": sp, "win": won})
+        total_pnl += pnl
+        trades.append({
+            "side": side,
+            "symbol": open_sig.get("symbol"),
+            "interval": open_sig.get("interval"),
+            "entry": round(bp, 6),
+            "exit": round(sp, 6),
+            "win": won,
+        })
     n = len(trades)
     if n:
         stats["wins"] = int(wins)
         stats["losses"] = n - int(wins)
         stats["winRate"] = round(wins / n, 3)
         stats["avgRR"] = round(total_pnl / n, 4)
+    stats["trades"] = trades[-100:]
 
     suggestion = _suggest(stats, strategy)
     if suggestion:
@@ -84,18 +91,20 @@ def review(stores, strategy: dict | None) -> dict:
     return stats
 
 
-def _pair_up(buys, sells):
-    """FIFO pairing of BUY→SELL per symbol+timeframe."""
-    open_positions: dict[tuple, list[dict]] = {}
+def _pair_up(signals):
+    """FIFO pairing of open→close per (symbol, interval, side)."""
+    queues: dict[tuple, list[dict]] = {}
     pairs = []
-    for sig in sorted(buys + sells, key=lambda s: s.get("ts") or ""):
-        key = (sig.get("symbol"), sig.get("interval"))
-        bucket = open_positions.setdefault(key, [])
-        if sig.get("action") == "BUY":
-            bucket.append(sig)
-        else:
+    for sig in sorted(signals, key=lambda s: s.get("ts") or ""):
+        action = sig.get("action")
+        if action in OPEN_ACTIONS:
+            side = OPEN_ACTIONS[action]
+            queues.setdefault((sig.get("symbol"), sig.get("interval"), side), []).append(sig)
+        elif action in CLOSE_ACTIONS:
+            side = CLOSE_ACTIONS[action]
+            bucket = queues.setdefault((sig.get("symbol"), sig.get("interval"), side), [])
             if bucket:
-                pairs.append((bucket.pop(0), sig))
+                pairs.append((bucket.pop(0), sig, side))
     return pairs
 
 
