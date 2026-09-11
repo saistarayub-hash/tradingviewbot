@@ -918,9 +918,13 @@ def generate_indicator(strategy: dict) -> str:
     # on close the block is finished and the trade is auto-marked with its P&L.
     draw_open_long = [
         "    tradeEntry := line.new(bar_index, close, bar_index, close, color=color.new(#2962ff, 25), width=2)",
+        "    tradeLiveLine := line.new(bar_index, close, bar_index, close, color=color.new(#2962ff, 25), style=line.style_dotted)",
+        "    tradeLiveBox := box.new(bar_index, close, bar_index, close, bgcolor=color.new(#26a69a, 88), border_width=0)",
     ]
     draw_open_short = [
         "    tradeEntry := line.new(bar_index, close, bar_index, close, color=color.new(#2962ff, 25), width=2)",
+        "    tradeLiveLine := line.new(bar_index, close, bar_index, close, color=color.new(#2962ff, 25), style=line.style_dotted)",
+        "    tradeLiveBox := box.new(bar_index, close, bar_index, close, bgcolor=color.new(#26a69a, 88), border_width=0)",
     ]
     if has_stop:
         draw_open_long += [
@@ -941,9 +945,34 @@ def generate_indicator(strategy: dict) -> str:
             "    tradeRewardBox := box.new(bar_index, close, bar_index, shortTarget, bgcolor=color.new(#26a69a, 94), border_width=0)",
         ]
     draw_extend = [
-        "if inLong or inShort",
+        "if inLong or inShort" if do_long and do_short else ("if inLong" if do_long else "if inShort"),
         "    line.set_x2(tradeEntry, bar_index)",
+        "    line.set_xy2(tradeLiveLine, bar_index, close)",
     ]
+    if do_long and do_short:
+        draw_extend += [
+            "    line.set_color(tradeLiveLine, inLong ? (close >= longEntry ? color.new(#26a69a, 20) : color.new(#ef5350, 20)) : (close <= shortEntry ? color.new(#26a69a, 20) : color.new(#ef5350, 20)))",
+            "    box.set_top(tradeLiveBox, inLong ? math.max(longEntry, close) : math.max(shortEntry, close))",
+            "    box.set_bottom(tradeLiveBox, inLong ? math.min(longEntry, close) : math.min(shortEntry, close))",
+            "    box.set_right(tradeLiveBox, bar_index)",
+            "    box.set_bgcolor(tradeLiveBox, inLong ? (close >= longEntry ? color.new(#26a69a, 88) : color.new(#ef5350, 88)) : (close <= shortEntry ? color.new(#26a69a, 88) : color.new(#ef5350, 88)))",
+        ]
+    elif do_long:
+        draw_extend += [
+            "    line.set_color(tradeLiveLine, close >= longEntry ? color.new(#26a69a, 20) : color.new(#ef5350, 20))",
+            "    box.set_top(tradeLiveBox, math.max(longEntry, close))",
+            "    box.set_bottom(tradeLiveBox, math.min(longEntry, close))",
+            "    box.set_right(tradeLiveBox, bar_index)",
+            "    box.set_bgcolor(tradeLiveBox, close >= longEntry ? color.new(#26a69a, 88) : color.new(#ef5350, 88))",
+        ]
+    else:
+        draw_extend += [
+            "    line.set_color(tradeLiveLine, close <= shortEntry ? color.new(#26a69a, 20) : color.new(#ef5350, 20))",
+            "    box.set_top(tradeLiveBox, math.max(shortEntry, close))",
+            "    box.set_bottom(tradeLiveBox, math.min(shortEntry, close))",
+            "    box.set_right(tradeLiveBox, bar_index)",
+            "    box.set_bgcolor(tradeLiveBox, close <= shortEntry ? color.new(#26a69a, 88) : color.new(#ef5350, 88))",
+        ]
     if has_stop:
         draw_extend += [
             "    line.set_x2(tradeStop, bar_index)",
@@ -955,9 +984,13 @@ def generate_indicator(strategy: dict) -> str:
             "    box.set_right(tradeRewardBox, bar_index)",
         ]
     draw_close_long = [
+        "    line.delete(tradeLiveLine)",
+        "    box.delete(tradeLiveBox)",
         "    line.set_x2(tradeEntry, bar_index)",
     ]
     draw_close_short = [
+        "    line.delete(tradeLiveLine)",
+        "    box.delete(tradeLiveBox)",
         "    line.set_x2(tradeEntry, bar_index)",
     ]
     if has_stop:
@@ -1031,6 +1064,8 @@ def generate_indicator(strategy: dict) -> str:
         "var line tradeExit      = na   // final price line of a finished trade",
         "var box  tradeRiskBox   = na   // shaded entry→stop zone",
         "var box  tradeRewardBox = na   // shaded entry→target zone",
+        "var line tradeLiveLine  = na   // dotted entry→price line (live P&L)",
+        "var box  tradeLiveBox   = na   // shaded entry→price zone (live P&L)",
     ]
     L.append('var string posReason = "—"   // why the current position is open')
     L.append("")
@@ -1064,7 +1099,7 @@ def generate_indicator(strategy: dict) -> str:
         L.append("")
     L.append("// ┌─ 6 · POSITION ENGINE ── entries · exits · reason labels · alerts ──")
     L.append("// (the position drawing takes the stop/target assigned in the entry block)")
-    L.append("// keep the open position drawing extended to the current bar")
+    L.append("// keep the open position drawing and its live P&L zone extended each bar")
     L.extend(draw_extend)
     L.append("")
     if do_long and do_short:
@@ -1159,7 +1194,7 @@ def generate_indicator(strategy: dict) -> str:
             "",
         ]
     L.append("// ┌─ 7 · VISUALS ─────── auto position drawing · entry / stop / target ──")
-    L.append("// (finished trades stay on the chart, auto-marked with their P&L)")
+    L.append("// (live P&L zone while a trade runs; finished trades stay on the chart, auto-marked)")
     L.append("")
     if ctx.plots:
         L.append("// ┌─ 8 · INDICATOR LINES ──────────────────────────────────────────────")
@@ -1185,8 +1220,20 @@ def generate_indicator(strategy: dict) -> str:
         stop_expr = 'inShort ? str.tostring(shortStop) : "—"'
         target_expr = 'inShort ? str.tostring(shortTarget) : "—"'
 
+    # live P&L cell (updates each bar while a trade is open)
+    if do_long and do_short:
+        pnl_expr = ('inLong ? (na(longEntry) or na(longStop) ? "—" : (close >= longEntry ? "+" : "") + str.tostring((close - longEntry) / (longEntry - longStop), "#.##") + "R") '
+                    ': inShort ? (na(shortEntry) or na(shortStop) ? "—" : (close <= shortEntry ? "+" : "") + str.tostring((shortEntry - close) / (shortStop - shortEntry), "#.##") + "R") : "—"')
+        pnl_color = ('inLong and not na(longEntry) ? (close >= longEntry ? color.new(#26a69a, 0) : color.new(#ef5350, 0)) '
+                     ': inShort and not na(shortEntry) ? (close <= shortEntry ? color.new(#26a69a, 0) : color.new(#ef5350, 0)) : color.new(#d1d4dc, 0)')
+    elif do_long:
+        pnl_expr = 'inLong ? (na(longEntry) or na(longStop) ? "—" : (close >= longEntry ? "+" : "") + str.tostring((close - longEntry) / (longEntry - longStop), "#.##") + "R") : "—"'
+        pnl_color = 'inLong and not na(longEntry) ? (close >= longEntry ? color.new(#26a69a, 0) : color.new(#ef5350, 0)) : color.new(#d1d4dc, 0)'
+    else:
+        pnl_expr = 'inShort ? (na(shortEntry) or na(shortStop) ? "—" : (close <= shortEntry ? "+" : "") + str.tostring((shortEntry - close) / (shortStop - shortEntry), "#.##") + "R") : "—"'
+        pnl_color = 'inShort and not na(shortEntry) ? (close <= shortEntry ? color.new(#26a69a, 0) : color.new(#ef5350, 0)) : color.new(#d1d4dc, 0)'
     L.append("// ┌─ 9 · POSITION PANEL ── live table (top-right) ─────────────────────")
-    L.append("var table posTable = table.new(position.top_right, 2, 6, bgcolor=color.new(#1e222d, 90), border_width=1, border_color=color.new(#363a45, 100))")
+    L.append("var table posTable = table.new(position.top_right, 2, 7, bgcolor=color.new(#1e222d, 90), border_width=1, border_color=color.new(#363a45, 100))")
     L.append("if barstate.isfirst")
     L.append("    table.merge_cells(posTable, 0, 0, 1, 0)")
     L.append("if barstate.islast")
@@ -1199,8 +1246,10 @@ def generate_indicator(strategy: dict) -> str:
     L.append(f"    table.cell(posTable, 1, 3, {stop_expr}, text_color=color.new(#d1d4dc, 0), text_size=size.small)")
     L.append('    table.cell(posTable, 0, 4, "Target", text_color=color.new(#787b86, 0), text_size=size.small)')
     L.append(f"    table.cell(posTable, 1, 4, {target_expr}, text_color=color.new(#d1d4dc, 0), text_size=size.small)")
-    L.append('    table.cell(posTable, 0, 5, "Reason", text_color=color.new(#787b86, 0), text_size=size.small)')
-    L.append("    table.cell(posTable, 1, 5, posReason, text_size=size.small)")
+    L.append('    table.cell(posTable, 0, 5, "P&L", text_color=color.new(#787b86, 0), text_size=size.small)')
+    L.append(f"    table.cell(posTable, 1, 5, {pnl_expr}, text_color={pnl_color}, text_size=size.small)")
+    L.append('    table.cell(posTable, 0, 6, "Reason", text_color=color.new(#787b86, 0), text_size=size.small)')
+    L.append("    table.cell(posTable, 1, 6, posReason, text_size=size.small)")
     L.append("")
     L.append("// ┌─ 10 · ALERTS ──────── wire these to your brain webhook ─────────────")
     if do_long:
