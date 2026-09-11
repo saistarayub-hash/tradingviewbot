@@ -134,9 +134,11 @@
       <button class="chip" onclick="send(document.getElementById('chip-ema').textContent)">📘 EMA cross + RSI (both sides)</button>
       <button class="chip" onclick="send(document.getElementById('chip-ichimoku').textContent)">⛩️ Ichimoku + EMA stack</button>
       <button class="chip" onclick="send(document.getElementById('chip-scalp').textContent)">⚡ Breakout scalp</button>
+      <button class="chip" onclick="send(document.getElementById('chip-ht').textContent)">📉 HalfTrend flip</button>
       <span class="hidden" id="chip-ema">Strategy: buy when the 9 EMA crosses above the 21 EMA and RSI is below 50, exit when the 9 EMA crosses back below. Stop 2 ATR, target 2 to 1 risk reward, 15 minute chart. Also short when the 9 EMA crosses below the 21 EMA with RSI above 50, cover when it crosses back above.</span>
       <span class="hidden" id="chip-ichimoku">Strategy: long when price closes above the Ichimoku cloud and the 10 EMA is above the 20 EMA above the 50 EMA, exit when it closes below the cloud. Stop 2 ATR, target 2R. 1 hour chart.</span>
       <span class="hidden" id="chip-scalp">Strategy: long when price breaks above the 20 bar high, exit when price breaks below the 20 bar low. Short when price breaks below the 20 bar low, cover on a 20 bar high breakout. Stop 1.5 ATR, target 2 to 1 risk reward. 5 minute chart.</span>
+      <span class="hidden" id="chip-ht">Strategy: long when the HalfTrend flips bullish, short when the HalfTrend flips bearish. Amplitude 20, channel deviation 2. 15 minute chart.</span>
     </div>
   </div>
 

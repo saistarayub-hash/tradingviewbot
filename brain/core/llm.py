@@ -55,6 +55,8 @@ SYSTEM_PROMPT = (
     "  breakout_high / breakdown_low               : {\"lookback\": n}  (highest high / lowest low)\n"
     "  support_bounce / resistance_reject          : {\"left\": 10, \"right\": 10}   (pivot bars)\n"
     "  ichimoku_cloud_up / ichimoku_cloud_down     : {\"conversion\": 9, \"base\": 26, \"lagging\": 52, \"disp\": 26}\n"
+    "  halftrend_up / halftrend_down               : {\"amplitude\": 20, \"channel_deviation\": 2.0}\n"
+    "  halftrend_bull / halftrend_bear             : same params\n"
     "  ichimoku_above_cloud / ichimoku_below_cloud : same params\n"
     "  ema_stack_bull / ema_stack_bear             : {\"fast\": 10, \"mid\": 20, \"slow\": 50}\n"
     "  rsi_below / rsi_above                       : {\"length\": 14, \"level\": n}\n"

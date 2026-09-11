@@ -80,6 +80,7 @@ KNOWN_RULE_IDS = {
     "adx_above", "volume_spike", "session",
     "ema_stack_bull", "ema_stack_bear",
     "ichimoku_above_cloud", "ichimoku_below_cloud",
+    "halftrend_up", "halftrend_down", "halftrend_bull", "halftrend_bear",
 }
 
 # Long ↔ short mirroring (for "the same strategy, flipped" extractions).
@@ -101,6 +102,8 @@ MIRROR = {
     "ichimoku_above_cloud": "ichimoku_below_cloud",
     "ichimoku_below_cloud": "ichimoku_above_cloud",
     "adx_above": "adx_above", "volume_spike": "volume_spike", "session": "session",
+    "halftrend_up": "halftrend_down", "halftrend_down": "halftrend_up",
+    "halftrend_bull": "halftrend_bear", "halftrend_bear": "halftrend_bull",
 }
 
 
@@ -235,18 +238,19 @@ def _clean_rules(rules) -> list[dict]:
 _ENTRY_IDS = {
     "ema_cross_up", "sma_cross_up", "macd_cross_up", "rsi_cross_up",
     "bb_lower_touch", "support_bounce", "breakout_high", "supertrend_up",
-    "ichimoku_cloud_up", "breakdown_low",
+    "ichimoku_cloud_up", "breakdown_low", "halftrend_up",
 }
 _EXIT_IDS = {
     "ema_cross_down", "sma_cross_down", "macd_cross_down", "rsi_cross_down",
     "bb_upper_touch", "supertrend_down", "resistance_reject",
-    "ichimoku_cloud_down",
+    "ichimoku_cloud_down", "halftrend_down",
 }
 _FILTER_IDS = {
     "rsi_below", "rsi_above", "price_above_ema", "price_below_ema",
     "vwap_above", "vwap_below", "adx_above", "volume_spike", "session",
     "ema_stack_bull", "ema_stack_bear",
     "ichimoku_above_cloud", "ichimoku_below_cloud",
+    "halftrend_bull", "halftrend_bear",
 }
 
 ALL_BUCKETS = ("entry", "exit", "short_entry", "short_exit", "filters", "short_filters")
@@ -496,6 +500,91 @@ def _rule_session(ctx, p) -> str:
     return f"{t} >= {start} and {t} < {end}"
 
 
+def _half_trend_engine(ctx, p) -> tuple[str, str, str, str]:
+    """Append the HalfTrend engine (trend matrix + baseline + bands).
+
+    Credited to everget; adapted from BigBeluga's HalfTrend Signal Engine
+    (CC BY-NC-SA 4.0). Returns (trend, line, bandHigh, bandLow) series names.
+    """
+    amplitude = _int(p, "amplitude", 20)
+    deviation = _float(p, "channel_deviation", 2.0)
+    key = f"halftrend:{amplitude}:{deviation}"
+    if key in ctx._series:
+        return ctx._series[key]
+    ctx._n += 1
+    i = ctx._n
+    trend, next_t = f"htTrend{i}", f"htNext{i}"
+    max_low, min_high = f"htMaxLow{i}", f"htMinHigh{i}"
+    up, down = f"htUp{i}", f"htDown{i}"
+    atr2, dev = f"htAtr{i}", f"htDev{i}"
+    hi_px, lo_px = f"htHi{i}", f"htLo{i}"
+    hi_ma, lo_ma = f"htHiMa{i}", f"htLoMa{i}"
+    line, atr_hi, atr_lo = f"htLine{i}", f"htBandHi{i}", f"htBandLo{i}"
+    ctx.decls.extend([
+        f"var int {trend} = 0",
+        f"var int {next_t} = 0",
+        f"var float {max_low} = low",
+        f"var float {min_high} = high",
+        f"var float {up} = 0.0",
+        f"var float {down} = 0.0",
+        "",
+        f"// — HalfTrend engine (amplitude {amplitude}, channel deviation {deviation})",
+        f"{atr2} = ta.atr(100) / 2",
+        f"{dev} = {deviation} * {atr2}",
+        f"{hi_px} = high[math.abs(ta.highestbars(high, {amplitude}))]",
+        f"{lo_px} = low[math.abs(ta.lowestbars(low, {amplitude}))]",
+        f"{hi_ma} = ta.sma(high, {amplitude})",
+        f"{lo_ma} = ta.sma(low, {amplitude})",
+        f"{atr_hi} = 0.0",
+        f"{atr_lo} = 0.0",
+        f"if {next_t} == 1",
+        f"    {max_low} := math.max({lo_px}, {max_low})",
+        f"    if {hi_ma} < {max_low} and close < nz(low[1], low)",
+        f"        {trend} := 1",
+        f"        {next_t} := 0",
+        f"        {min_high} := {hi_px}",
+        f"else",
+        f"    {min_high} := math.min({hi_px}, {min_high})",
+        f"    if {lo_ma} > {min_high} and close > nz(high[1], high)",
+        f"        {trend} := 0",
+        f"        {next_t} := 1",
+        f"        {max_low} := {lo_px}",
+        f"if {trend} == 0",
+        f"    if not na({trend}[1]) and {trend}[1] != 0",
+        f"        {up} := na({down}[1]) ? {down} : {down}[1]",
+        f"    else",
+        f"        {up} := na({up}[1]) ? {max_low} : math.max({max_low}, {up}[1])",
+        f"    {atr_hi} := {up} + {dev}",
+        f"    {atr_lo} := {up} - {dev}",
+        f"else",
+        f"    if not na({trend}[1]) and {trend}[1] != 1",
+        f"        {down} := na({up}[1]) ? {up} : {up}[1]",
+        f"    else",
+        f"        {down} := na({down}[1]) ? {min_high} : math.min({min_high}, {down}[1])",
+        f"    {atr_hi} := {down} + {dev}",
+        f"    {atr_lo} := {down} - {dev}",
+        f"{line} = {trend} == 0 ? {up} : {down}",
+    ])
+    names = (trend, line, atr_hi, atr_lo)
+    ctx._series[key] = names
+    ctx.plot(line, "HalfTrend",
+             color=f"{trend} == 0 ? color.new(#26a69a, 0) : color.new(#ef5350, 0)",
+             linewidth=3)
+    ctx.plot(atr_hi, "HalfTrend band high", color="color.new(#ef5350, 78)")
+    ctx.plot(atr_lo, "HalfTrend band low", color="color.new(#26a69a, 78)")
+    return names
+
+
+def _rule_halftrend(ctx, p, up: bool) -> str:
+    trend, _line, _hi, _lo = _half_trend_engine(ctx, p)
+    return f"{trend} == 0 and {trend}[1] == 1" if up else f"{trend} == 1 and {trend}[1] == 0"
+
+
+def _rule_halftrend_filter(ctx, p, bull: bool) -> str:
+    trend, _line, _hi, _lo = _half_trend_engine(ctx, p)
+    return f"{trend} == 0" if bull else f"{trend} == 1"
+
+
 _RULES = {
     "ema_cross_up": lambda c, p: _rule_ema(c, p, True),
     "ema_cross_down": lambda c, p: _rule_ema(c, p, False),
@@ -528,6 +617,10 @@ _RULES = {
     "session": _rule_session,
     "ema_stack_bull": lambda c, p: _rule_ema_stack(c, p, True),
     "ema_stack_bear": lambda c, p: _rule_ema_stack(c, p, False),
+    "halftrend_up": lambda c, p: _rule_halftrend(c, p, True),
+    "halftrend_down": lambda c, p: _rule_halftrend(c, p, False),
+    "halftrend_bull": lambda c, p: _rule_halftrend_filter(c, p, True),
+    "halftrend_bear": lambda c, p: _rule_halftrend_filter(c, p, False),
 }
 
 
@@ -606,6 +699,14 @@ def _rule_reason(rule: dict) -> str:
         return f"Volume ×{fmt(_float(p,'mult',2.0))} avg"
     if rid == "session":
         return "In session"
+    if rid == "halftrend_up":
+        return "HalfTrend ↑ (bull flip)"
+    if rid == "halftrend_down":
+        return "HalfTrend ↓ (bear flip)"
+    if rid == "halftrend_bull":
+        return "HalfTrend bull"
+    if rid == "halftrend_bear":
+        return "HalfTrend bear"
     return rid
 
 
@@ -706,6 +807,16 @@ def _safe_name(name: str) -> str:
 def _header(strategy: dict) -> str:
     src = strategy.get("source_video") or "hand-authored"
     rules = summarize_rules(strategy).replace("\n", "\n//  ")
+    credit = ""
+    if any(
+        r["id"].startswith("halftrend")
+        for bucket in ("entry", "exit", "short_entry", "short_exit", "filters", "short_filters")
+        for r in strategy.get("rules", {}).get(bucket, [])
+    ):
+        credit = (
+            f"//  HalfTrend logic: everget — adapted from BigBeluga's HalfTrend "
+            f"Signal Engine (CC BY-NC-SA 4.0)\n"
+        )
     return (
         f"// ════════════════════════════════════════════════════════════════\n"
         f"//  {_safe_name(strategy['name'])}  (revision {strategy.get('revision', 1)})\n"
@@ -714,6 +825,7 @@ def _header(strategy: dict) -> str:
         f"//  Market: {strategy.get('market', 'any')} · timeframe {strategy.get('timeframe', 'any')} · side {strategy.get('side', 'long')}\n"
         f"//  {rules}\n"
         f"//  NOTE: educational tool — not financial advice. Test before live use.\n"
+        f"{credit}"
         f"// ════════════════════════════════════════════════════════════════"
     )
 

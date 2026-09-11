@@ -55,6 +55,7 @@ scripts — same output as typing the strategy.
 |---|---|
 | `pine/indicator.pine` | The **indicator**, organised in neat blocks: **LONG BLOCK** / **SHORT BLOCK** conditions + engines, on-chart **labels on every signal showing the reasons** it fired, a live **position panel** (top-right table), stop/target lines, and 4 `alertcondition`s |
 | `pine/strategy.pine` | The **same rules** as a TradingView `strategy()` script (long + short) → use the Strategy Tester to backtest |
+| `pine/halftrend_example.pine` | Reference copy of BigBeluga's original HalfTrend engine (CC BY-NC-SA 4.0) — the brain's `halftrend_*` rules implement the same logic with signals, reason labels and webhook alerts |
 | `data/strategy.json` | The canonical strategy the brain "knows" (rules, side, stop, target, revision) |
 
 The chat app also includes a **Signal dashboard** (recent webhook feed +
@@ -90,11 +91,12 @@ Rule ids:
 - **Signals:** `ema_cross_up/down`, `sma_cross_up/down`, `macd_cross_up/down`,
   `rsi_cross_up/down`, `bb_lower_touch`, `bb_upper_touch`, `supertrend_up/down`,
   `breakout_high`, `breakdown_low`, `support_bounce`, `resistance_reject`,
-  `ichimoku_cloud_up/down`
+  `ichimoku_cloud_up/down`, `halftrend_up/down` (HalfTrend trend flips —
+  amplitude + channel-deviation params, credited to everget / BigBeluga)
 - **Filters:** `rsi_below`, `rsi_above`, `price_above_ema`, `price_below_ema`,
   `vwap_above`, `vwap_below`, `adx_above`, `volume_spike`, `session`,
   `ema_stack_bull/bear` (“20 EMA above the 50 above the 200”),
-  `ichimoku_above/below_cloud`
+  `ichimoku_above/below_cloud`, `halftrend_bull/bear`
 - **Stop:** ATR-multiple / percent / swing low (swing high for shorts) ·
   **Target:** R:R / percent / opposite
 

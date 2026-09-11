@@ -1,0 +1,331 @@
+// This work is licensed under Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+// https://creativecommons.org/licenses/by-nc-sa/4.0/
+// © BigBeluga
+
+// Credit to everget for the original HalfTrend logic
+
+//@version=6
+indicator("HalfTrend Long/Short Signal Engine [BigBeluga]", overlay=true, max_labels_count=500)
+
+// ＩＮＰＵＴＳ ――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――{
+grp_ht = "HalfTrend Settings"
+amplitude        = input.int(20, "Amplitude", minval=1, group=grp_ht, tooltip="Determines the lookback period for highest highs and lowest lows used in the trend calculation.")
+channelDeviation = input.float(2.0, "Channel Deviation", minval=0.1, step=0.1, group=grp_ht, tooltip="Multiplier for the Average True Range (ATR) to establish the upper and lower channel bands.")
+
+
+grp_risk = "Risk Management"
+baseRiskMult = input.float(3, "Base Risk", step =0.1, group=grp_risk, tooltip="Sets SL distance from HalfTrend line, and TP1 distance from entry. TP2 is 2x, TP3 is 3x.")
+
+grp_dash = "Multi-Asset Scanner"
+sym1 = input.symbol("BINANCE:BTCUSD", "Symbol 1", group=grp_dash, tooltip="First symbol tracked in the multi-asset dashboard.")
+sym2 = input.symbol("BINANCE:ETHUSD", "Symbol 2", group=grp_dash, tooltip="Second symbol tracked in the multi-asset dashboard.")
+sym3 = input.symbol("BINANCE:SOLUSD", "Symbol 3", group=grp_dash, tooltip="Third symbol tracked in the multi-asset dashboard.")
+sym4 = input.symbol("OANDA:EURUSD",   "Symbol 4", group=grp_dash, tooltip="Fourth symbol tracked in the multi-asset dashboard.")
+sym5 = input.symbol("OANDA:XAUUSD",   "Symbol 5", group=grp_dash, tooltip="Fifth symbol tracked in the multi-asset dashboard.")
+
+grp_style = "Style & Colors"
+
+// Inline Group 1: Trends
+channelDeviationUp = input.int(70, "Channel Deviation Transparency", group=grp_style, minval = 0, maxval = 100)
+colorBull   = input.color(color.lime,   "Bullish", inline="trend", group=grp_style, tooltip="")
+colorBear   = input.color(color.red, "Bearish", inline="trend", group=grp_style, tooltip="Primary color for bullish trends, target lines, and dashboard highlights.\nPrimary color for bearish trends and channel bands.")
+
+// Inline Group 2: Trade Lines
+colorEntry  = input.color(color.white,  "Entry", inline="trade", group=grp_style, tooltip="")
+colorTP     = input.color(color.teal,   "Take Profit", inline="trade", group=grp_style, tooltip="")
+colorSL     = input.color(color.red,    "Stop Loss", inline="trade", group=grp_style, tooltip="Color used to mark the active trade entry price.\nColor used for the Take Profit target lines.\nColor used for stop loss lines and short trade text.")
+
+// Inline Group 3: Trade Fills
+colorFillTP = input.color(color.new(color.teal, 80),   "TP Fill", inline="fills", group=grp_style, tooltip="")
+colorFillSL = input.color(color.new(color.red, 60),    "SL Fill", inline="fills", group=grp_style, tooltip="Base color for the Take Profit zone gradient fills.\nBase color for the Stop Loss zone gradient fills.")
+
+// Standard Dash Elements
+colorText   = input.color(color.white,  "Text Color", group=grp_style, tooltip="Base color for labels and dashboard text.")
+colorDashBg = input.color(color.new(color.black, 20), "Dashboard Background", group=grp_style, tooltip="Background color for the dashboard tables.")
+colorDashHd = input.color(color.new(color.gray, 40), "Dashboard Header", group=grp_style, tooltip="Background color for the header rows in the dashboards.")
+colorWin    = input.color(color.green,  "Win Rate High Color", group=grp_style, tooltip="Text color when the win rate is 50% or above.")
+colorLoss   = input.color(color.orange, "Win Rate Low Color", group=grp_style, tooltip="Text color when the win rate falls below 50%.")
+// }
+
+// ＣＡＬＣＵＬＡＴＩＯＮＳ――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――{
+// CORE HALFTREND ENGINE
+var int trend = 0
+var int nextTrend = 0
+var float maxLowPrice = low
+var float minHighPrice = high
+var float up = 0.0
+var float down = 0.0
+
+float atrHigh = 0.0
+float atrLow = 0.0
+float arrowUp = na
+float arrowDown = na
+
+// Calculate 100-period ATR divided by 2 as per official parameters
+float atr2 = ta.atr(100) / 2
+float dev = channelDeviation * atr2
+
+// Get the actual high/low price of the swing bar index
+float highPrice = high[math.abs(ta.highestbars(high, amplitude))]
+float lowPrice  = low[math.abs(ta.lowestbars(low, amplitude))]
+
+float highma = ta.sma(high, amplitude)
+float lowma  = ta.sma(low, amplitude)
+
+// Trend Logic Matrix
+if nextTrend == 1
+    maxLowPrice := math.max(lowPrice, maxLowPrice)
+    if highma < maxLowPrice and close < nz(low[1], low)
+        trend := 1
+        nextTrend := 0
+        minHighPrice := highPrice
+else
+    minHighPrice := math.min(highPrice, minHighPrice)
+    if lowma > minHighPrice and close > nz(high[1], high)
+        trend := 0
+        nextTrend := 1
+        maxLowPrice := lowPrice
+
+// Calculate Baseline Paths
+if trend == 0
+    if not na(trend[1]) and trend[1] != 0
+        up := na(down[1]) ? down : down[1]
+        arrowUp := up - atr2
+    else
+        up := na(up[1]) ? maxLowPrice : math.max(maxLowPrice, up[1])
+    atrHigh := up + dev
+    atrLow  := up - dev
+else
+    if not na(trend[1]) and trend[1] != 1
+        down := na(up[1]) ? up : up[1]
+        arrowDown := down + atr2
+    else
+        down := na(down[1]) ? minHighPrice : math.min(minHighPrice, down[1])
+    atrHigh := down + dev
+    atrLow  := down - dev
+
+// Pure HalfTrend Line Selection (trend == 0 is Bullish, trend == 1 is Bearish)
+float htLine = trend == 0 ? up : down
+
+// Signal Generation
+bool buySignal  = trend == 0 and trend[1] == 1 and barstate.isconfirmed
+bool sellSignal = trend == 1 and trend[1] == 0 and barstate.isconfirmed
+
+// RISK MANAGEMENT & TRADE TRACKING
+var float activeSL  = na
+var float activeTP1 = na
+var float activeTP2 = na
+var float activeTP3 = na
+
+var int tradeState = 0 // 0 = Flat, 1 = Long, -1 = Short
+var float entryPx  = na
+var int wins       = 0
+var int losses     = 0
+
+// Track TP hits for rendering checkmarks
+bool longTPHit  = false
+bool shortTPHit = false
+var bool longTPHit1  = false
+var bool shortTPHit1 = false
+
+// Evaluate Active Trade for Exit
+if tradeState == 1
+
+    if not na(activeSL)
+        if high >= activeTP1 // Win counts when ANY profit target hits
+            wins += 1
+            activeTP1 := na
+            longTPHit := true
+            longTPHit1 := true
+        else if high >= activeTP2
+            wins += 1
+            activeTP2 := na
+            longTPHit := true
+        else if high >= activeTP3
+            wins += 1
+            activeTP3 := na
+            longTPHit := true
+            tradeState := 0
+            activeSL := na
+
+
+    if low <= activeSL
+        losses += 1
+
+        tradeState := 0
+        activeSL := na
+
+        if longTPHit1
+            wins -=1
+            losses -= 1
+
+
+
+else if tradeState == -1
+
+    if not na(activeSL)
+        if low <= activeTP1
+            wins += 1
+            activeTP1 := na
+            shortTPHit := true
+            shortTPHit1 := true
+        else if low <= activeTP2
+            wins += 1
+            activeTP2 := na
+            shortTPHit := true
+        else if low <= activeTP3
+            wins += 1
+            activeTP3 := na
+            shortTPHit := true
+            tradeState := 0
+            activeSL := na
+
+
+    if high >= activeSL
+        losses += 1
+        tradeState := 0
+        activeSL := na
+        if shortTPHit1
+            wins -=1
+            losses -= 1
+
+// Execute New Signals & Handle Trend Reversals
+if buySignal
+    longTPHit1 := false
+    float dist = atr2 * baseRiskMult
+    activeSL  := close - dist
+    activeTP1 := close + dist
+    activeTP2 := close + (dist * 2)
+    activeTP3 := close + (dist * 3)
+    tradeState := 1
+    entryPx := close
+
+else if sellSignal
+    // Reversal Exit Check
+
+    shortTPHit1 := false
+    float dist = atr2 * baseRiskMult
+    activeSL  := close + dist
+    activeTP1 := close - dist
+    activeTP2 := close - (dist * 2)
+    activeTP3 := close - (dist * 3)
+    tradeState := -1
+    entryPx := close
+
+// Calculate Current Trade Distance (%)
+float currentDistPct = 0.0
+if tradeState == 1
+    currentDistPct := ((close - entryPx) / entryPx) * 100
+else if tradeState == -1
+    currentDistPct := ((entryPx - close) / entryPx) * 100
+
+// Calculate Win Rate
+int totalTrades = wins + losses
+float winRate = totalTrades > 0 ? (wins / totalTrades) * 100 : 0.0
+
+// MULTI-ASSET
+t1 = request.security(sym1, timeframe.period, trend)
+t2 = request.security(sym2, timeframe.period, trend)
+t3 = request.security(sym3, timeframe.period, trend)
+t4 = request.security(sym4, timeframe.period, trend)
+t5 = request.security(sym5, timeframe.period, trend)
+// }
+
+// ＰＬＯＴ ――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――{
+// VISUALIZATION
+color htColor = trend == 0 ? colorBull : colorBear
+plot(htLine, "HalfTrend", color=htColor, linewidth=3)
+plot(atrHigh, "ATR High Band", color=color.new(colorBear, channelDeviationUp))
+plot(atrLow,  "ATR Low Band",  color=color.new(colorBull, channelDeviationUp))
+
+plotshape(buySignal,  "Long Label",  style=shape.labelup,   location=location.belowbar, color=colorBull,  text="LONG",  textcolor=colorText, size=size.normal)
+plotshape(sellSignal, "Short Label", style=shape.labeldown, location=location.abovebar, color=colorBear, text="SHORT", textcolor=colorText, size=size.normal)
+
+// Capture Plots for Gradient Fills
+p_bull_sl = plot(trend == 0 and tradeState != 0 and not na(activeTP3) ? activeSL : na, "Bull SL", color=color.new(colorSL, 40), style=plot.style_linebr, linewidth=1)
+p_bear_sl = plot(trend == 1 and tradeState != 0 and not na(activeTP3) ? activeSL : na, "Bear SL", color=color.new(colorSL, 40), style=plot.style_linebr, linewidth=1)
+
+p_entry = plot(tradeState != 0 and not na(activeTP3) and not na(activeSL) ? entryPx : na, "Trade Entry", color=color.new(colorEntry, 0), style=plot.style_linebr, linewidth=1)
+
+plot(trend == 0 and tradeState != 0 and not na(activeSL) ? activeTP1 : na, "Bull TP1", color=color.new(colorTP, 30), style=plot.style_linebr, linewidth=1)
+plot(trend == 0 and tradeState != 0 and not na(activeSL) ? activeTP2 : na, "Bull TP2", color=color.new(colorTP, 15), style=plot.style_linebr, linewidth=1)
+p_bull_tp3 = plot(trend == 0 and tradeState != 0 and not na(activeSL) ? activeTP3 : na, "Bull TP3", color=color.new(colorTP, 0), style=plot.style_linebr, linewidth=1)
+
+plot(trend == 1 and tradeState != 0 and not na(activeSL) ? activeTP1 : na, "Bear TP1", color=color.new(colorTP, 30), style=plot.style_linebr, linewidth=1)
+plot(trend == 1 and tradeState != 0 and not na(activeSL) ? activeTP2 : na, "Bear TP2", color=color.new(colorTP, 15), style=plot.style_linebr, linewidth=1)
+p_bear_tp3 = plot(trend == 1 and tradeState != 0  and not na(activeSL)? activeTP3 : na, "Bear TP3", color=color.new(colorTP, 0), style=plot.style_linebr, linewidth=1)
+
+// TARGET HIT PLOTS
+var count = 0
+
+if trend != trend[1]
+    count := 0
+
+if longTPHit
+    count += 1
+    label.new(bar_index, high, "✓"+str.tostring(count), style = label.style_label_down, textcolor = colorTP, color = color(na))
+    if count == 3
+        count := 0
+
+if shortTPHit
+    count += 1
+    label.new(bar_index, low, "✓"+str.tostring(count), style = label.style_label_up, textcolor = colorTP, color = color(na))
+    if count == 3
+        count := 0
+
+// GRADIENT FILLS
+// Bull Gradients (TP3 is above Entry, Entry is above SL)
+fill(plot1=p_bull_tp3, plot2=p_entry, top_value=activeTP3, bottom_value=entryPx, top_color=colorFillTP, bottom_color=color.new(colorFillTP, 95), title="Bull TP Gradient")
+fill(plot1=p_entry, plot2=p_bull_sl, top_value=entryPx, bottom_value=activeSL, top_color=color.new(colorFillSL, 95), bottom_color=colorFillSL, title="Bull SL Gradient")
+
+// Bear Gradients (Entry is above TP3, SL is above Entry)
+fill(plot1=p_entry, plot2=p_bear_tp3, top_value=entryPx, bottom_value=activeTP3, top_color=color.new(colorFillTP, 95), bottom_color=colorFillTP, title="Bear TP Gradient")
+fill(plot1=p_bear_sl, plot2=p_entry, top_value=activeSL, bottom_value=entryPx, top_color=colorFillSL, bottom_color=color.new(colorFillSL, 95), title="Bear SL Gradient")
+
+
+// DASHBOARDS
+var table dashMain  = na
+var table dashMulti = na
+
+if barstate.islast
+    // 1. Performance Dashboard (Bottom Right)
+    dashMain := table.new(position.bottom_right, 2, 5, bgcolor=colorDashBg, border_color=chart.bg_color, border_width=2)
+
+    table.cell(dashMain, 0, 0, "PERFORMANCE", text_color=colorText, bgcolor=colorDashHd, text_size=size.normal, text_halign=text.align_left)
+    table.cell(dashMain, 1, 0, "DATA", text_color=colorText, bgcolor=colorDashHd, text_size=size.normal)
+
+    table.cell(dashMain, 0, 1, "Win Rate", text_color=colorText, text_size=size.normal, text_halign=text.align_left)
+    table.cell(dashMain, 1, 1, str.tostring(winRate, "#.##") + "% (" + str.tostring(wins) + "W | " + str.tostring(losses) + "L)", text_color=winRate >= 50 ? colorWin : colorLoss, text_size=size.normal, tooltip = "Win Rate (Wins/ Losses)")
+
+    table.cell(dashMain, 0, 2, "Target R:R", text_color=colorText, text_size=size.normal, text_halign=text.align_left)
+    table.cell(dashMain, 1, 2, "1 : 3", text_color=colorText, text_size=size.normal)
+
+    string tradeTxt = tradeState == 1 ? "LONG" : tradeState == -1 ? "SHORT" : "NONE"
+    color  tradeCol = tradeState == 1 ? colorBull : tradeState == -1 ? colorSL : colorText
+    string distTxt  = tradeState != 0 ? " (" + (currentDistPct > 0 ? "+" : "") + str.tostring(currentDistPct, "#.##") + "%)" : ""
+
+    table.cell(dashMain, 0, 4, "Current Trade", text_color=colorText, text_size=size.normal, text_halign=text.align_left)
+    table.cell(dashMain, 1, 4, tradeTxt + distTxt, text_color=tradeCol, text_size=size.normal, bgcolor=color.new(tradeCol, 85))
+
+    // 2. Multi-Asset Dashboard (Top Right)
+    dashMulti := table.new(position.top_right, 2, 6, bgcolor=colorDashBg, border_color=chart.bg_color, border_width=2)
+
+    table.cell(dashMulti, 0, 0, "MULTI-ASSET", text_color=colorText, bgcolor=colorDashHd, text_size=size.normal, text_halign=text.align_left)
+    table.cell(dashMulti, 1, 0, "TRADE", text_color=colorText, bgcolor=colorDashHd, text_size=size.normal)
+
+    // Row 1
+    table.cell(dashMulti, 0, 1, sym1, text_color=colorText, text_size=size.normal, text_halign=text.align_left)
+    table.cell(dashMulti, 1, 1, t1 == 0 ? "LONG" : "SHORT", text_color=t1 == 0 ? colorBull : colorSL, text_size=size.normal, bgcolor=t1 == 0 ? color.new(colorBull, 85) : color.new(colorBear, 85))
+    // Row 2
+    table.cell(dashMulti, 0, 2, sym2, text_color=colorText, text_size=size.normal, text_halign=text.align_left)
+    table.cell(dashMulti, 1, 2, t2 == 0 ? "LONG" : "SHORT", text_color=t2 == 0 ? colorBull : colorSL, text_size=size.normal, bgcolor=t2 == 0 ? color.new(colorBull, 85) : color.new(colorBear, 85))
+    // Row 3
+    table.cell(dashMulti, 0, 3, sym3, text_color=colorText, text_size=size.normal, text_halign=text.align_left)
+    table.cell(dashMulti, 1, 3, t3 == 0 ? "LONG" : "SHORT", text_color=t3 == 0 ? colorBull : colorSL, text_size=size.normal, bgcolor=t3 == 0 ? color.new(colorBull, 85) : color.new(colorBear, 85))
+    // Row 4
+    table.cell(dashMulti, 0, 4, sym4, text_color=colorText, text_size=size.normal, text_halign=text.align_left)
+    table.cell(dashMulti, 1, 4, t4 == 0 ? "LONG" : "SHORT", text_color=t4 == 0 ? colorBull : colorSL, text_size=size.normal, bgcolor=t4 == 0 ? color.new(colorBull, 85) : color.new(colorBear, 85))
+    // Row 5
+    table.cell(dashMulti, 0, 5, sym5, text_color=colorText, text_size=size.normal, text_halign=text.align_left)
+    table.cell(dashMulti, 1, 5, t5 == 0 ? "LONG" : "SHORT", text_color=t5 == 0 ? colorBull : colorSL, text_size=size.normal, bgcolor=t5 == 0 ? color.new(colorBull, 85) : color.new(colorBear, 85))
+// }

@@ -243,6 +243,12 @@ def extract_heuristic(text: str) -> dict:
             fast, mid, slow = 10, 20, 50
         filters.append({"id": "ema_stack_bull", "params": {"fast": fast, "mid": mid, "slow": slow}})
 
+    # ── HalfTrend ───────────────────────────────────────────────────────
+    halftrend_seen = bool(re.search(r"\bhalf\s*tren(?:d)?\b", t))
+    if halftrend_seen:
+        entry.append({"id": "halftrend_up", "params": {}})
+        exits.append({"id": "halftrend_down", "params": {}})
+
     # ── MACD ───────────────────────────────────────────────────────────
     if re.search(r"\bmacd\b", t):
         if re.search(r"macd\s+cross\w*\s*(up|above)|bullish\s+macd|cross\w*\s+(?:up\s+|above\s+)?(?:on\s+)?\w*macd", t):
@@ -337,6 +343,14 @@ def extract_heuristic(text: str) -> dict:
         target = {"type": "percent", "params": {"pct": pct}}
     elif stop and not re.search(r"\btake profit\b|\btarget\b", t):
         target = {"type": "opposite", "params": {}}
+
+    if halftrend_seen:
+        # default risk from BigBeluga's engine: SL = baseRisk(3) × ATR(100)/2
+        if stop is None:
+            stop = {"type": "atr", "params": {"length": 100, "mult": 1.5}}
+        if target is None:
+            target = {"type": "rr", "params": {"rr": 3.0}}
+        notes.append("HalfTrend risk: SL = 1.5×ATR(100) below entry, target 3R (TP3).")
 
     if not entry:
         notes.append("Couldn't find a clear entry signal — defaulted to EMA 9/21 crossover.")
